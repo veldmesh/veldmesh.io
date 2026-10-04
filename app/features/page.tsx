@@ -1,12 +1,13 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import type { Metadata } from "next"
+import type { ReactNode } from "react"
 import { Lock, Wifi, RouteOff, Server } from "lucide-react"
 
 export const metadata: Metadata = {
   title: "Features — Veld",
 }
 
-const sections = [
+const sections: { icon: typeof Lock; title: string; body: ReactNode[]; detail: string }[] = [
   {
     icon: Lock,
     title: "Noise IK encryption",
@@ -21,9 +22,15 @@ const sections = [
     title: "NAT traversal",
     body: [
       "UDP hole-punching succeeds for roughly 85% of real-world NAT configurations, covering symmetric NAT, full-cone NAT, and port-restricted NAT.",
-      "For the remaining 15%, Veld relays traffic through a mesh peer — never through the coord server. Your data stays off our infrastructure.",
+      <>
+        For the ~15% where direct connection fails (symmetric NAT behind symmetric NAT),
+        traffic <em>will</em> relay through a chosen mesh peer — never through the
+        coordination server. The relaying peer sees only encrypted packet sizes/timing, not
+        content. <strong>Relay implementation is in progress.</strong>
+      </>,
     ],
-    detail: "No coord-server relay. Ever.",
+    detail:
+      "The coordination server never relays data-plane traffic. Any future relay is an out-of-band mesh peer, not an extension of the directory.",
   },
   {
     icon: RouteOff,

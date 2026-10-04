@@ -49,7 +49,7 @@ const tiers = [
     machines: "Unlimited machines",
     networks: "Unlimited networks",
     subnetRouting: true,
-    extras: ["Audit logs", "SSO / SAML"],
+    extras: ["Audit logs", "SSO / SAML — managed tier only (not in Community Edition)"],
     highlighted: false,
   },
 ]
