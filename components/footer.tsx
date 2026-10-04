@@ -34,6 +34,12 @@ export function Footer() {
               Privacy
             </Link>
             <Link
+              href="/security"
+              className="text-sm text-slate-500 hover:text-slate-900 transition-colors"
+            >
+              Security
+            </Link>
+            <Link
               href="/terms"
               className="text-sm text-slate-500 hover:text-slate-900 transition-colors"
             >
