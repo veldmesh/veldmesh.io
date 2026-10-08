@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import Link from "next/link"
 import { ShieldCheck, DollarSign, Code2 } from "lucide-react"
+import { WaitlistForm } from "@/components/waitlist-form"
 
 const features = [
   {
@@ -35,20 +36,15 @@ export default function HomePage() {
             One flat price per network — not per user. Built on Noise IK, peer-to-peer encrypted,
             no traffic through our servers.
           </p>
-          <div className="mt-10 flex items-center justify-center gap-4 flex-wrap">
-            <Link
-              href="https://app.veldmesh.io/signup"
-              className="rounded-md bg-green-600 px-6 py-3 text-base font-medium text-white hover:bg-green-700 transition-colors"
-            >
-              Get started free
-            </Link>
-            <Link
-              href="/docs"
-              className="rounded-md border border-slate-200 bg-white px-6 py-3 text-base font-medium text-slate-900 hover:bg-slate-50 transition-colors"
-            >
+          <div className="mx-auto mt-10 max-w-md">
+            <WaitlistForm />
+          </div>
+          <p className="mt-6 text-sm text-slate-500">
+            Want to read first?{" "}
+            <Link href="/docs" className="font-medium text-green-600 hover:underline">
               Read the docs
             </Link>
-          </div>
+          </p>
         </div>
       </section>
 

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import type { Metadata } from "next"
 
+import { WaitlistForm } from "@/components/waitlist-form"
+
 export const metadata: Metadata = {
   title: "Docs — Veld",
 }
@@ -103,7 +105,7 @@ veld login --server grpc://your-coord:50051`}
           <h2 className="text-2xl font-bold text-slate-900 mb-4">NAT traversal</h2>
           <p className="text-slate-600 leading-relaxed">
             Veld uses UDP hole-punching coordinated through the coord server. The coord server
-            tells each peer the other's discovered public endpoint; both peers simultaneously send
+            tells each peer the other&rsquo;s discovered public endpoint; both peers simultaneously send
             UDP packets to open the NAT pinholes. This succeeds for ~85% of real-world NATs.
           </p>
           <p className="mt-3 text-slate-600 leading-relaxed">
@@ -154,6 +156,14 @@ ping 192.168.1.100`}
                 ))}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="mt-16 rounded-2xl border border-slate-100 bg-slate-50 px-6 py-12 text-center sm:px-10">
+          <h2 className="text-2xl font-bold text-slate-900">Join the waitlist</h2>
+          <p className="mx-auto mt-2 max-w-md text-slate-600">Leave your email and we&rsquo;ll send you an invitation when a spot opens up.</p>
+          <div className="mx-auto mt-8 max-w-md">
+            <WaitlistForm />
           </div>
         </section>
       </div>
