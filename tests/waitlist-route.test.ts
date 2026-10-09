@@ -12,6 +12,7 @@ const { fetchMock, sendMailMock, createTransportMock } = vi.hoisted(() => {
     host?: string
     port?: number
     secure?: boolean
+    pool?: boolean
     auth?: { user?: string; pass?: string }
   }
   const sendMailMock = vi.fn((_mail: SentMail) => Promise.resolve({}))
@@ -26,6 +27,7 @@ vi.mock("nodemailer", () => ({
 }))
 
 import { HONEYPOT_FIELD } from "@/lib/waitlist/validation"
+import { rateLimitBucketCount } from "@/lib/waitlist/rate-limit"
 import { POST } from "@/app/api/waitlist/route"
 
 const ENV_KEYS = [
@@ -71,6 +73,14 @@ function makeRequest(body: unknown, ip = uniqueIp()): Request {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
     body: typeof body === "string" ? body : JSON.stringify(body),
+  })
+}
+
+function bareRequest(): Request {
+  return new Request("http://localhost:3000/api/waitlist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(validPayload()),
   })
 }
 
@@ -202,6 +212,63 @@ describe("POST /api/waitlist — rate limiting", () => {
     const blockedAgain = await POST(makeRequest(validPayload(), ip))
     expect(blockedAgain.status).toBe(429)
   })
+
+  it("sweeps stale buckets so the tracked-IP map stays bounded", async () => {
+    setEnv(WEBHOOK_ENV)
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
+    const ip = "198.51.100.30"
+
+    for (let i = 0; i < 5; i++) {
+      const res = await POST(makeRequest(validPayload(), ip))
+      expect(res.status).toBe(200)
+    }
+    const blocked = await POST(makeRequest(validPayload(), ip))
+    expect(blocked.status).toBe(429)
+    const trackedBefore = rateLimitBucketCount()
+    expect(trackedBefore).toBeGreaterThan(0)
+
+    // Far past the eviction window: every bucket idle long enough to have
+    // fully refilled is swept, so the map shrinks instead of growing.
+    vi.setSystemTime(new Date("2027-01-01T00:00:00Z"))
+    const res = await POST(makeRequest(validPayload(), "198.51.100.31"))
+    expect(res.status).toBe(200)
+    expect(rateLimitBucketCount()).toBe(1)
+
+    // Eviction is invisible to the swept client: it starts with a full bucket.
+    const revisited = await POST(makeRequest(validPayload(), ip))
+    expect(revisited.status).toBe(200)
+    expect(rateLimitBucketCount()).toBe(2)
+  })
+
+  it("does not share one bucket when no proxy header is present", async () => {
+    setEnv(WEBHOOK_ENV)
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
+
+    // Without x-forwarded-for/x-real-ip, requests must not all land in one
+    // shared bucket — otherwise one direct client could block every other.
+    for (let i = 0; i < 6; i++) {
+      const res = await POST(bareRequest())
+      expect(res.status).toBe(200)
+    }
+  })
+
+  it("still rate limits requests that share the same x-real-ip", async () => {
+    setEnv(WEBHOOK_ENV)
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
+    const request = () =>
+      new Request("http://localhost:3000/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Real-Ip": "198.51.100.9" },
+        body: JSON.stringify(validPayload()),
+      })
+
+    for (let i = 0; i < 5; i++) {
+      const res = await POST(request())
+      expect(res.status).toBe(200)
+    }
+    const blocked = await POST(request())
+    expect(blocked.status).toBe(429)
+  })
 })
 
 describe("POST /api/waitlist — sink selection", () => {
@@ -272,14 +339,30 @@ describe("POST /api/waitlist — sink selection", () => {
       host: "smtp.example.com",
       port: 465,
       secure: true,
+      pool: true,
       auth: { user: "bot@veldmesh.io", pass: "relay-password" },
     })
 
     const mail = sendMailMock.mock.calls[0][0]
+    expect(mail.from).toBe("bot@veldmesh.io")
     expect(mail.to).toBe("owner@veldmesh.io")
     expect(mail.subject).toContain("user@example.com")
     expect(mail.text).toContain("user@example.com")
     expect(mail.text).toContain(new Date("2026-10-08T12:00:00Z").toISOString())
+  })
+
+  it("creates one pooled transporter per SMTP configuration and reuses it", async () => {
+    setEnv({ ...SMTP_ENV, SMTP_HOST: "smtp-pool.example.com" })
+    sendMailMock.mockResolvedValue({})
+
+    const first = await POST(makeRequest(validPayload(), "203.0.113.72"))
+    expect(first.status).toBe(200)
+    const second = await POST(makeRequest(validPayload(), "203.0.113.73"))
+    expect(second.status).toBe(200)
+
+    expect(sendMailMock).toHaveBeenCalledTimes(2)
+    // Two signups, one transporter — not a fresh connection per request.
+    expect(createTransportMock).toHaveBeenCalledTimes(1)
   })
 
   it("succeeds when the webhook fails but email succeeds", async () => {
@@ -313,6 +396,20 @@ describe("POST /api/waitlist — sink selection", () => {
     const res = await POST(makeRequest(validPayload(), "203.0.113.67"))
     expect(res.status).toBe(503)
     expect((await res.json()).error).toBeTruthy()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(sendMailMock).not.toHaveBeenCalled()
+  })
+
+  it("treats the email sink as unconfigured when SMTP_USER is missing", async () => {
+    // SMTP_USER doubles as the From address; without it the relay would
+    // likely reject or misalign the message (SPF/DKIM), so the sink must
+    // stay off rather than send from an unverified address.
+    const withoutUser: Record<string, string> = { ...SMTP_ENV }
+    delete withoutUser.SMTP_USER
+    setEnv(withoutUser)
+
+    const res = await POST(makeRequest(validPayload(), "203.0.113.74"))
+    expect(res.status).toBe(503)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(sendMailMock).not.toHaveBeenCalled()
   })

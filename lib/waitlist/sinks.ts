@@ -32,7 +32,10 @@ export function webhookConfigured(env: Record<string, string | undefined>): bool
 }
 
 export function emailConfigured(env: Record<string, string | undefined>): boolean {
-  return Boolean(env.SMTP_HOST && env.WAITLIST_NOTIFY_TO)
+  // SMTP_USER is required: it doubles as the From address, and relays
+  // typically reject (or fail SPF/DKIM alignment for) mail from addresses
+  // the authenticated account is not authorized to send from.
+  return Boolean(env.SMTP_HOST && env.SMTP_USER && env.WAITLIST_NOTIFY_TO)
 }
 
 export async function sendToWebhook(
@@ -57,20 +60,36 @@ export async function sendToWebhook(
   }
 }
 
+type Transporter = ReturnType<typeof nodemailer.createTransport>
+
+// One pooled transporter per SMTP configuration, created lazily on first
+// use and reused across requests, so each signup does not pay for a fresh
+// TCP/TLS connection plus SMTP handshake. The pool closes idle connections
+// on its own; there is nothing to tear down at shutdown.
+let cachedTransporter: { key: string; transporter: Transporter } | null = null
+
+function getTransporter(env: Record<string, string | undefined>): Transporter {
+  const port = env.SMTP_PORT ? Number(env.SMTP_PORT) : 587
+  const options = {
+    host: env.SMTP_HOST as string,
+    port,
+    secure: port === 465,
+    pool: true,
+    auth: { user: env.SMTP_USER as string, pass: env.SMTP_PASS },
+  }
+  const key = JSON.stringify(options)
+  if (!cachedTransporter || cachedTransporter.key !== key) {
+    cachedTransporter = { key, transporter: nodemailer.createTransport(options) }
+  }
+  return cachedTransporter.transporter
+}
+
 export async function sendToEmail(
   env: Record<string, string | undefined>,
   record: WaitlistRecord
 ): Promise<boolean> {
-  const port = env.SMTP_PORT ? Number(env.SMTP_PORT) : 587
-  const auth = env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASS } : undefined
-
   try {
-    const transporter = nodemailer.createTransport({
-      host: env.SMTP_HOST as string,
-      port,
-      secure: port === 465,
-      auth,
-    })
+    const transporter = getTransporter(env)
 
     const lines = [
       "New waitlist signup",
@@ -85,7 +104,7 @@ export async function sendToEmail(
     ]
 
     await transporter.sendMail({
-      from: env.SMTP_USER ?? "waitlist@veldmesh.io",
+      from: env.SMTP_USER as string,
       to: env.WAITLIST_NOTIFY_TO as string,
       subject: `New waitlist signup: ${record.email}`,
       text: lines.join("\n"),

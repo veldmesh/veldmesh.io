@@ -6,14 +6,37 @@
 export const RATE_LIMIT_CAPACITY = 5
 export const RATE_LIMIT_REFILL_MS = 60_000
 
+// A bucket idle for >= RATE_LIMIT_CAPACITY refill intervals is completely
+// refilled, so evicting it is indistinguishable from keeping it. Sweeping
+// such buckets keeps the map bounded to recently active clients instead of
+// growing forever with every unique IP ever seen.
+const STALE_BUCKET_MS = RATE_LIMIT_CAPACITY * RATE_LIMIT_REFILL_MS
+const SWEEP_INTERVAL_MS = RATE_LIMIT_REFILL_MS
+
 interface Bucket {
   tokens: number
   lastRefill: number
 }
 
 const buckets = new Map<string, Bucket>()
+let lastSweep = 0
+
+// Observability: number of client buckets currently tracked.
+export function rateLimitBucketCount(): number {
+  return buckets.size
+}
+
+function sweepStaleBuckets(now: number): void {
+  if (now - lastSweep < SWEEP_INTERVAL_MS) return
+  lastSweep = now
+  for (const [key, bucket] of buckets) {
+    if (now - bucket.lastRefill >= STALE_BUCKET_MS) buckets.delete(key)
+  }
+}
 
 export function checkRateLimit(key: string, now: number): boolean {
+  sweepStaleBuckets(now)
+
   let bucket = buckets.get(key)
   if (!bucket) {
     bucket = { tokens: RATE_LIMIT_CAPACITY, lastRefill: now }

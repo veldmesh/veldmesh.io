@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
+import { randomUUID } from "node:crypto"
 import { MAX_BODY_BYTES, parseSignupBody } from "@/lib/waitlist/validation"
 import { checkRateLimit } from "@/lib/waitlist/rate-limit"
 import {
@@ -33,7 +34,16 @@ function clientIp(request: Request): string {
     const first = forwarded.split(",")[0].trim()
     if (first) return first
   }
-  return request.headers.get("x-real-ip")?.trim() || "unknown"
+  const realIp = request.headers.get("x-real-ip")?.trim()
+  if (realIp) return realIp
+  // No proxy header: production traffic always arrives through a reverse
+  // proxy (nginx/Vercel) that sets x-forwarded-for, so this is direct
+  // access. Give each such request a private bucket key instead of a
+  // shared "unknown" bucket, so one direct client cannot exhaust the
+  // limit for every other direct client. These requests are not
+  // per-client rate limited — the origin should never be exposed
+  // directly (see README).
+  return `unknown:${randomUUID()}`
 }
 
 export async function POST(request: Request): Promise<Response> {

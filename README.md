@@ -36,8 +36,17 @@ external systems happens server-side in that route.
 - **Rate limiting** — in-memory token bucket, 5 requests per client IP
   (refill: 1 token/minute). `429` when exhausted. This state is
   **per-instance**: on a single long-lived server (e.g. the VPS) it is
-  process-global, but on serverless platforms each instance enforces its
-  own bucket. It is a best-effort abuse guard, not a hard guarantee.
+  process-global, but on serverless platforms each instance enforces
+  its own bucket. It is a best-effort abuse guard, not a hard guarantee.
+  Buckets idle for ≥ 5 minutes are fully refilled, so they are swept and
+  dropped; the tracked-IP map stays bounded to recently active clients
+  and never grows without limit.
+  The client IP is taken from `x-forwarded-for` (first entry) or
+  `x-real-ip`. Deployments must sit behind a reverse proxy (nginx, Vercel)
+  that sets one of these headers, and the origin should never be exposed
+  directly. Requests arriving without any proxy header get a private
+  per-request bucket, so they cannot block other clients, but that
+  traffic is not per-client rate limited.
 - **Body size** — requests over 8 KB are rejected with `413`.
 - **UTM / referrer** — the form captures `utm_source`, `utm_medium`,
   `utm_campaign` (from the page URL) and `document.referrer` and sends them
@@ -52,7 +61,7 @@ them in your environment (never commit values — see `.env.example`):
 | Sink   | Enabled when                                                                 | Variables                                                                                                                          |
 | ------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | Webhook | `WAITLIST_WEBHOOK_URL` is set                                                | `WAITLIST_WEBHOOK_URL`, `WAITLIST_WEBHOOK_TOKEN` (optional; sent as `Authorization: Bearer <token>`)                              |
-| Email  | `SMTP_HOST` **and** `WAITLIST_NOTIFY_TO` are set                              | `SMTP_HOST`, `SMTP_PORT` (default `587`; `465` switches to implicit TLS), `SMTP_USER`, `SMTP_PASS` (optional), `WAITLIST_NOTIFY_TO` |
+| Email  | `SMTP_HOST`, `SMTP_USER` **and** `WAITLIST_NOTIFY_TO` are set                | `SMTP_HOST`, `SMTP_PORT` (default `587`; `465` switches to implicit TLS), `SMTP_USER` (required; also the From address), `SMTP_PASS` (optional), `WAITLIST_NOTIFY_TO` |
 
 **Webhook** — POSTs the signup as JSON:
 
@@ -76,7 +85,12 @@ for example the operator's internal waitlist collector.
 hand-rolling an SMTP client because SMTP (STARTTLS, AUTH, connection
 reuse, edge cases) is easy to get subtly wrong; nodemailer is small, has no
 runtime dependencies beyond SMTP itself, and is the standard, well-
-maintained choice in the Node ecosystem.
+maintained choice in the Node ecosystem. One pooled transporter is created
+per SMTP configuration and reused across signups, so each signup reuses an
+established SMTP connection instead of paying for a fresh TCP/TLS
+handshake. The message is sent from `SMTP_USER`, which must be an address
+the relay is authorized to send from (SPF/DKIM alignment) — the sink stays
+disabled without it.
 
 ### Response behavior
 
@@ -103,6 +117,7 @@ collected fields.
 `CI=true npm test` runs the vitest suite in `tests/` against the real route
 handler with fully mocked sinks (fetch and nodemailer). Covered: email
 validation, consent enforcement, JSON/body-size rejection, honeypot
-behavior, per-IP rate limiting (burst, block, refill), sink selection,
-sink failure fallback, `503` when unconfigured, and the generic success
-contract.
+behavior, per-IP rate limiting (burst, block, refill, stale-bucket sweep,
+requests without proxy headers), sink selection, sink failure fallback,
+SMTP transporter reuse, the `SMTP_USER` requirement, `503` when
+unconfigured, and the generic success contract.
