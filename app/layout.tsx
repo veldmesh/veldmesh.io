@@ -7,7 +7,7 @@ import { Footer } from "@/components/footer"
 export const metadata: Metadata = {
   title: "Veld — Zero-trust mesh VPN",
   description:
-    "Per-network pricing, not per-user. Built on Noise IK, peer-to-peer encrypted, no traffic through our servers.",
+    "Per-network pricing, not per-user. End-to-end encrypted with Noise IK — the coordination server never carries your traffic.",
   icons: { icon: "/logo.png", apple: "/logo.png" },
 }
 

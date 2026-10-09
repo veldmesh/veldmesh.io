@@ -11,7 +11,7 @@ const features = [
   {
     icon: ShieldCheck,
     title: "Zero-trust by default",
-    body: "Coord server sees only public keys. Traffic is always peer-to-peer encrypted.",
+    body: "Coord server sees only public keys. All data-plane traffic is end-to-end encrypted with Noise IK. The coordination server is structurally incapable of reading it — it holds only public keys and endpoints.",
   },
   {
     icon: Code2,
@@ -32,8 +32,10 @@ export default function HomePage() {
             <span className="text-green-600">Zero-trust mesh VPN</span> for teams and home labs.
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-lg text-slate-600">
-            One flat price per network — not per user. Built on Noise IK, peer-to-peer encrypted,
-            no traffic through our servers.
+            One flat price per network — not per user. Connections are end-to-end encrypted
+            between your devices. Most connect directly; when a network blocks that, traffic
+            goes through a relay that cannot read it. The coordination server never carries
+            traffic.
           </p>
           <div className="mt-10 flex items-center justify-center gap-4 flex-wrap">
             <Link

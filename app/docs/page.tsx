@@ -107,9 +107,10 @@ veld login --server grpc://your-coord:50051`}
             UDP packets to open the NAT pinholes. This succeeds for ~85% of real-world NATs.
           </p>
           <p className="mt-3 text-slate-600 leading-relaxed">
-            For the remaining ~15% (symmetric NAT behind symmetric NAT), traffic is relayed through
-            a chosen mesh peer — never through the coord server. The relaying peer can see packet
-            sizes and timing but not content (all traffic is Noise IK encrypted end-to-end).
+            For the ~15% where direct connection fails (symmetric NAT behind symmetric NAT),
+            traffic <em>will</em> relay through a chosen mesh peer — never through the coordination
+            server. The relaying peer sees only encrypted packet sizes/timing, not content.{" "}
+            <strong>Relay implementation is in progress.</strong>
           </p>
         </section>
 
