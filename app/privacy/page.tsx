@@ -27,11 +27,17 @@ export default function PrivacyPage() {
           </p>
           <h3>Network and machine metadata</h3>
           <p>
-            We store the names, IP addresses, and public keys of machines you register with the
-            coordination server. The coordination server never sees or stores your VPN traffic —
-            all data-plane communication is end-to-end encrypted with Noise IK. When direct
-            connection isn't possible, traffic routes through a relay peer that cannot read
-            it (encryption is end-to-end between your devices).
+            We store the names, VPN addresses, public keys, advertised subnet routes, and
+            last-seen times of machines you register with the coordination server. Public
+            endpoints (ip:port) are kept in memory, and we see client IP addresses when devices
+            connect. The coordination server relays end-to-end-encrypted NAT signals it cannot
+            read and never sees or stores your VPN traffic — all data-plane communication is
+            end-to-end encrypted with Noise IK.
+          </p>
+          <p>
+            When a direct connection isn't possible, traffic falls back to a relay. The relay
+            forwards encrypted traffic and sees connection metadata (IPs, timing, volume), but
+            never content — encryption is end-to-end between your devices.
           </p>
           <h3>Billing information</h3>
           <p>

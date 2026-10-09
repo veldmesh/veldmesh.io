@@ -11,7 +11,7 @@ const features = [
   {
     icon: ShieldCheck,
     title: "Zero-trust by default",
-    body: "Coord server sees only public keys. All data-plane traffic is end-to-end encrypted with Noise IK. The coordination server is structurally incapable of reading it — it holds only public keys and endpoints.",
+    body: "All data-plane traffic is end-to-end encrypted with Noise IK. The coordination server holds public keys, VPN addresses, device names, advertised routes, and last-seen times on disk, keeps public endpoints (ip:port) in memory, and relays end-to-end-encrypted NAT signals it cannot read. It sees client IP addresses when devices connect, but never data-plane traffic.",
   },
   {
     icon: Code2,
