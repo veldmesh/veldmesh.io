@@ -13,9 +13,10 @@ const sections: { icon: typeof Lock; title: string; body: ReactNode[]; detail: s
     title: "Noise IK encryption",
     body: [
       "Ed25519 identity keys establish trust on first contact. X25519 ephemeral keys negotiate each session for forward secrecy. ChaCha20-Poly1305 encrypts every packet on the data plane.",
-      "The coordination server only ever sees public keys and IP addresses — it is structurally incapable of performing a man-in-the-middle attack because it never touches session key material.",
+      "The coordination server holds public keys, VPN addresses, device names, advertised subnet routes, and last-seen times on disk, keeps public endpoints (ip:port) in memory, relays end-to-end-encrypted NAT signals it cannot read, and sees client IP addresses when devices connect. It never sees data-plane traffic.",
+      "The coordination server distributes public keys; peers pin a key the first time they see it (trust on first use), so the server can't swap a key afterwards without the peer noticing.",
     ],
-    detail: "Protocol: Noise_IK_25519_ChaChaPoly_BLAKE2s",
+    detail: "Protocol: Noise_IK_25519_ChaChaPoly_SHA256",
   },
   {
     icon: Wifi,
@@ -24,13 +25,13 @@ const sections: { icon: typeof Lock; title: string; body: ReactNode[]; detail: s
       "UDP hole-punching succeeds for roughly 85% of real-world NAT configurations, covering symmetric NAT, full-cone NAT, and port-restricted NAT.",
       <>
         For the ~15% where direct connection fails (symmetric NAT behind symmetric NAT),
-        traffic <em>will</em> relay through a chosen mesh peer — never through the
-        coordination server. The relaying peer sees only encrypted packet sizes/timing, not
-        content. <strong>Relay implementation is in progress.</strong>
+        peers fall back to the relay — never through the coordination server. The relay
+        forwards encrypted traffic and sees connection metadata (IPs, timing, volume),
+        never content. The relay server is open source (cmd/veld-relay).
       </>,
     ],
     detail:
-      "The coordination server never relays data-plane traffic. Any future relay is an out-of-band mesh peer, not an extension of the directory.",
+      "The coordination server never relays data-plane traffic. The relay (cmd/veld-relay) is open source and runs separately from the coordination server.",
   },
   {
     icon: RouteOff,
@@ -46,9 +47,9 @@ const sections: { icon: typeof Lock; title: string; body: ReactNode[]; detail: s
     title: "Self-hosting",
     body: [
       "The CE coordination server is released under BSL (Business Source License), which converts to Apache 2.0 four years after each release. Run it anywhere — bare metal, VPS, or Kubernetes.",
-      "Single static binary with embedded SQLite. Docker image available. OpenWrt packages built for MIPS and ARMv6. The daemon is MIT licensed — fork it, audit it, embed it.",
+      "Single static binary that stores state in bbolt — a single embedded database file on disk. OpenWrt packages built for MIPS and ARMv6. The daemon is MIT licensed — fork it, audit it, embed it.",
     ],
-    detail: "docker run veld/coord",
+    detail: "State: one bbolt file on disk",
   },
 ]
 

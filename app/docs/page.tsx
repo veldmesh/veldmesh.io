@@ -76,19 +76,12 @@ allowed_ips = ["10.0.0.2/32"]`}
         <section id="self-hosting" className="mb-14">
           <h2 className="text-2xl font-bold text-slate-900 mb-4">Self-hosting the coord server</h2>
           <p className="text-slate-600 mb-4 leading-relaxed">
-            The CE coordination server is a single static binary. It stores state in embedded SQLite
-            (or Postgres via{" "}
-            <code className="rounded bg-slate-100 px-1 py-0.5">DATABASE_URL</code>).
+            The CE coordination server is a single static binary. It stores state in bbolt — a
+            single embedded database file on disk.
           </p>
           <div className="rounded-xl bg-slate-900 p-6">
             <pre className="overflow-x-auto font-mono text-sm text-green-400 leading-relaxed">
-              {`# Docker
-docker run -d \\
-  -p 50051:50051 \\
-  -v veld-data:/data \\
-  veld/coord
-
-# Point the daemon at your server
+              {`# Point the daemon at your server
 veld login --server grpc://your-coord:50051`}
             </pre>
           </div>
@@ -108,9 +101,9 @@ veld login --server grpc://your-coord:50051`}
           </p>
           <p className="mt-3 text-slate-600 leading-relaxed">
             For the ~15% where direct connection fails (symmetric NAT behind symmetric NAT),
-            traffic <em>will</em> relay through a chosen mesh peer — never through the coordination
-            server. The relaying peer sees only encrypted packet sizes/timing, not content.{" "}
-            <strong>Relay implementation is in progress.</strong>
+            peers fall back to the relay — never through the coordination server. The relay
+            forwards encrypted traffic and sees connection metadata (IPs, timing, volume), not
+            content. The relay server is open source (cmd/veld-relay).
           </p>
         </section>
 

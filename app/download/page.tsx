@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import type { Metadata } from "next"
-import { Terminal, Apple, Monitor, Box, Cpu } from "lucide-react"
+import { Terminal, Apple, Monitor, Cpu } from "lucide-react"
 
 export const metadata: Metadata = {
   title: "Download — Veld",
@@ -66,27 +66,6 @@ export default function DownloadPage() {
             >
               Download installer (.exe)
             </a>
-          </div>
-
-          {/* Docker (coord server) */}
-          <div className="rounded-xl border border-slate-200 p-8">
-            <div className="flex items-center gap-3 mb-4">
-              <Box className="h-6 w-6 text-slate-700" />
-              <h2 className="text-xl font-semibold text-slate-900">
-                Docker <span className="text-sm font-normal text-slate-500">(coord server only)</span>
-              </h2>
-            </div>
-            <p className="text-sm text-slate-600 mb-4">
-              Self-host the CE coordination server. State is stored in the <code className="rounded bg-slate-100 px-1">/data</code> volume.
-            </p>
-            <div className="rounded-lg bg-slate-900 p-4">
-              <pre className="font-mono text-sm text-green-400 whitespace-pre-wrap">
-                {`docker run -d \\
-  -p 50051:50051 \\
-  -v data:/data \\
-  veld/coord`}
-              </pre>
-            </div>
           </div>
 
           {/* OpenWrt */}
