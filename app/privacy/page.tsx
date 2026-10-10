@@ -7,7 +7,7 @@ export default function PrivacyPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:px-8">
         <h1 className="mb-2 text-3xl font-bold text-slate-900">Privacy Policy</h1>
-        <p className="mb-10 text-sm text-slate-500">Effective date: June 11, 2026</p>
+        <p className="mb-10 text-sm text-slate-500">Effective date: October 8, 2026</p>
 
         <section className="prose prose-slate max-w-none">
           <p>
@@ -44,6 +44,16 @@ export default function PrivacyPage() {
             Payments are processed by Stripe. We store only your Stripe customer ID; we never
             store full card numbers or bank details.
           </p>
+          <h3>Waitlist signups</h3>
+          <p>
+            When you join our waitlist we collect the email address you submit and the time you
+            consented to be contacted. If present, we also record the campaign tags
+            (utm_source, utm_medium, utm_campaign) and the referring page that brought you to
+            the site, so we know which outreach is working. Your IP address is used transiently
+            to rate-limit the signup form and is not stored with your entry. Signups are
+            delivered directly to the operator by email and/or webhook &mdash; the website
+            itself stores nothing.
+          </p>
           <h3>Usage data</h3>
           <p>
             We collect basic server logs (IP address, timestamp, HTTP method, path) for security
@@ -57,6 +67,7 @@ export default function PrivacyPage() {
             <li>Respond to support requests</li>
             <li>Detect and prevent abuse or unauthorized access</li>
             <li>Send transactional emails (password reset, subscription notices)</li>
+            <li>Send waitlist invitations</li>
           </ul>
           <p>We do not sell your data to third parties. We do not use your data for advertising.</p>
 
@@ -87,6 +98,12 @@ export default function PrivacyPage() {
             any time by emailing{" "}
             <a href="mailto:hello@veldmesh.io">hello@veldmesh.io</a>. Deleted accounts are
             purged within 30 days. Billing records may be retained longer as required by law.
+          </p>
+          <p>
+            Waitlist entries are kept until we send your invitation or until you ask us to
+            remove you, whichever comes first. To be removed from the waitlist, email{" "}
+            <a href="mailto:hello@veldmesh.io">hello@veldmesh.io</a> and we will delete your
+            entry.
           </p>
 
           <h2>5. Security</h2>
