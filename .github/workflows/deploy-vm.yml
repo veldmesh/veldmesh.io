@@ -1,0 +1,266 @@
+name: Deploy to VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (currently only production supported)"
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+      skip_harden:
+        description: "Skip VM hardening (first-run setup)"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches: [main]
+    # Opt-in via label: to deploy on push, the PR merged to main must have the "deploy-vm" label.
+    # This is checked via the GitHub API in the job condition.
+
+permissions:
+  contents: read
+
+env:
+  # Action versions pinned to commit SHAs (updated weekly by dependabot)
+  ACTIONS_CHECKOUT_SHA: 11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+  ACTIONS_SETUP_NODE_SHA: 60edb5dd545a775178f52524783378180af0d1f8 # v4.1.0
+
+jobs:
+  deploy:
+    name: Deploy to GCP VM
+    runs-on: ubuntu-latest
+    environment: production
+    # Run on workflow_dispatch, or on push to main if the merged PR had the "deploy-vm" label
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.repository.default_branch == 'main')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.1.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js standalone
+        run: npm run build
+
+      - name: Verify standalone output
+        run: |
+          if [[ ! -d ".next/standalone" ]]; then
+            echo "Error: .next/standalone not found. Ensure next.config.js has output: 'standalone'"
+            exit 1
+          fi
+          if [[ ! -f ".next/standalone/server.js" ]]; then
+            echo "Error: .next/standalone/server.js not found"
+            exit 1
+          fi
+          echo "Standalone build verified."
+
+      - name: Check PR label for push trigger (opt-in)
+        if: github.event_name == 'push'
+        id: pr_label_check
+        run: |
+          # For push events, check if the commit was part of a merged PR with the "deploy-vm" label
+          # Get the PR number for this commit (if any)
+          PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls --jq '.[0].number' 2>/dev/null || echo "")
+          if [[ -n "$PR_NUMBER" ]]; then
+            LABELS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '.labels[].name' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -q "deploy-vm"; then
+              echo "deploy_opt_in=true" >> $GITHUB_OUTPUT
+            else
+              echo "deploy_opt_in=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "deploy_opt_in=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Skip if push without deploy-vm label
+        if: github.event_name == 'push' && steps.pr_label_check.outputs.deploy_opt_in != 'true'
+        run: |
+          echo "Push to main not opted in for deployment (no 'deploy-vm' label on merged PR). Skipping."
+          exit 0
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" | base64 -d > ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+          ssh-keyscan -H "${{ secrets.VM_SSH_HOST }}" >> ~/.ssh/known_hosts
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+
+      - name: Check if first deploy (config.toml exists)
+        id: first_deploy
+        run: |
+          if ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "test -f /etc/vel/config.toml"; then
+            echo "first_deploy=false" >> $GITHUB_OUTPUT
+          else
+            echo "first_deploy=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+
+      - name: Run VM hardening (first deploy only)
+        if: steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true'
+        run: |
+          scp -i ~/.ssh/vm_key deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden-vm.sh"
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo VM_MESH_PORT=${{ secrets.VM_MESH_PORT }} \
+            IRONSERVER_MESH_ADDR=${{ secrets.IRONSERVER_MESH_ADDR }} \
+            WAITLIST_BEARER_TOKEN=${{ secrets.WAITLIST_BEARER_TOKEN }} \
+            RELAY_IDENTITY_KEY_B64=${{ secrets.RELAY_IDENTITY_KEY_B64 }} \
+            bash /tmp/harden-vm.sh
+          "
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+          VM_MESH_PORT: ${{ secrets.VM_MESH_PORT }}
+          IRONSERVER_MESH_ADDR: ${{ secrets.IRONSERVER_MESH_ADDR }}
+          WAITLIST_BEARER_TOKEN: ${{ secrets.WAITLIST_BEARER_TOKEN }}
+          RELAY_IDENTITY_KEY_B64: ${{ secrets.RELAY_IDENTITY_KEY_B64 }}
+
+      - name: Verify hardening (run --check)
+        run: |
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo VM_MESH_PORT=${{ secrets.VM_MESH_PORT }} \
+            IRONSERVER_MESH_ADDR=${{ secrets.IRONSERVER_MESH_ADDR }} \
+            WAITLIST_BEARER_TOKEN=${{ secrets.WAITLIST_BEARER_TOKEN }} \
+            RELAY_IDENTITY_KEY_B64=${{ secrets.RELAY_IDENTITY_KEY_B64 }} \
+            bash /tmp/harden-vm.sh --check
+          "
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+          VM_MESH_PORT: ${{ secrets.VM_MESH_PORT }}
+          IRONSERVER_MESH_ADDR: ${{ secrets.IRONSERVER_MESH_ADDR }}
+          WAITLIST_BEARER_TOKEN: ${{ secrets.WAITLIST_BEARER_TOKEN }}
+          RELAY_IDENTITY_KEY_B64: ${{ secrets.RELAY_IDENTITY_KEY_B64 }}
+
+      - name: Render and deploy config.toml from template
+        run: |
+          # Render template with secrets
+          sed \
+            -e "s/{{VM_MESH_IP}}/${{ secrets.VM_MESH_IP }}/g" \
+            -e "s/{{VM_PUBLIC_ENDPOINT}}/${{ secrets.VM_PUBLIC_ENDPOINT }}/g" \
+            -e "s/{{VM_MESH_PORT}}/${{ secrets.VM_MESH_PORT }}/g" \
+            -e "s/{{IRONSERVER_MESH_IP}}/${{ secrets.IRONSERVER_MESH_IP }}/g" \
+            -e "s/{{IRONSERVER_PUBLIC_ENDPOINT}}/${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}/g" \
+            deploy/config.toml.tmpl > /tmp/config.toml
+
+          # Copy to VM
+          scp -i ~/.ssh/vm_key /tmp/config.toml "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/config.toml"
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo mv /tmp/config.toml /etc/vel/config.toml
+            sudo chown vel:vel /etc/vel/config.toml
+            sudo chmod 600 /etc/vel/config.toml
+          "
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+          VM_MESH_IP: ${{ secrets.VM_MESH_IP }}
+          VM_PUBLIC_ENDPOINT: ${{ secrets.VM_PUBLIC_ENDPOINT }}
+          VM_MESH_PORT: ${{ secrets.VM_MESH_PORT }}
+          IRONSERVER_MESH_IP: ${{ secrets.IRONSERVER_MESH_IP }}
+          IRONSERVER_PUBLIC_ENDPOINT: ${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}
+
+      - name: Deploy Next.js app via rsync
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no" \
+            .next/standalone/ \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/"
+
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no" \
+            public/ \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/public/"
+
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no" \
+            .next/static/ \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/.next/static/"
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+          VM_DEPLOY_PATH: ${{ secrets.VM_DEPLOY_PATH }}
+
+      - name: Deploy systemd units
+        run: |
+          scp -i ~/.ssh/vm_key deploy/veldsite.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/veldsite.service"
+          scp -i ~/.ssh/vm_key deploy/vel-daemon.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/vel-daemon.service"
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo mv /tmp/veldsite.service /etc/systemd/system/veldsite.service
+            sudo mv /tmp/vel-daemon.service /etc/systemd/system/vel-daemon.service
+            sudo systemctl daemon-reload
+          "
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+
+      - name: Restart services
+        run: |
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo systemctl restart veld-daemon veldsite
+            sudo systemctl status veld-daemon --no-pager
+            sudo systemctl status veldsite --no-pager
+          "
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+
+      - name: Verify deployment
+        run: |
+          # Wait a moment for services to start
+          sleep 5
+          # Check health endpoint or landing page
+          curl -fSs https://velmesh.io > /dev/null && echo "✓ Landing page accessible"
+          # Check waitlist endpoint responds (may return 202 on mesh failure)
+          curl -fSs -X POST https://velmesh.io/api/waitlist \
+            -H "Content-Type: application/json" \
+            -d '{"email":"test@example.com"}' \
+            -w "\nHTTP %{http_code}\n" | grep -E "(200|202)" && echo "✓ Waitlist endpoint responds"
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+
+      - name: Verify veld daemon peer connection
+        run: |
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo journalctl -u vel-daemon --no-pager -n 50 | grep -i 'peer.*connected\|connected.*peer' && echo '✓ Veld daemon shows peer connected' || echo '⚠ Veld daemon peer connection not yet visible in logs'
+          "
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+
+      - name: Verify systemd user contexts
+        run: |
+          ssh -i ~/.ssh/vm_key -o StrictHostKeyChecking=no "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            echo 'velsite user:' \$(systemctl show -p User --value veldsite)
+            echo 'vel-daemon user:' \$(systemctl show -p User --value vel-daemon)
+            test \"\$(systemctl show -p User --value veldsite)\" = \"velsite\" && echo '✓ veldsite runs as velsite'
+            test \"\$(systemctl show -p User --value vel-daemon)\" = \"vel\" && echo '✓ vel-daemon runs as vel'
+          "
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}

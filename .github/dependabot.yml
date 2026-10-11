@@ -1,0 +1,53 @@
+# Dependabot configuration for weekly GitHub Actions SHA updates
+# This ensures all actions in workflows are pinned to commit SHAs and updated weekly
+
+version: 2
+updates:
+  # Update GitHub Actions in .github/workflows/
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    # Only update commit SHAs, not version tags
+    commit-message:
+      prefix: "ci:"
+      include: "scope"
+    # Group updates for easier review
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    # Allow updates to commit SHAs only
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # Ignore version tag updates (we only want SHA updates)
+    ignore:
+      - dependency-name: "*"
+        update-type: "version-update:semver-patch"
+      - dependency-name: "*"
+        update-type: "version-update:semver-minor"
+      - dependency-name: "*"
+        update-type: "version-update:semver-major"
+
+  # Also update npm dependencies weekly
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    commit-message:
+      prefix: "deps:"
+      include: "scope"
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
