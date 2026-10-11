@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import type { Metadata } from "next"
+import Link from "next/link"
 
 export const metadata: Metadata = {
   title: "Docs — Veld",
@@ -23,6 +24,21 @@ export default function DocsPage() {
     <div className="bg-white py-16">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
         <h1 className="text-4xl font-bold text-slate-900 mb-10">Documentation</h1>
+
+        {/* Guides */}
+        <section id="guides" className="mb-14">
+          <h2 className="text-2xl font-bold text-slate-900 mb-4">Guides</h2>
+          <ul className="list-disc space-y-1 pl-5 text-slate-600">
+            <li>
+              <Link
+                href="/docs/commercial-vpns"
+                className="text-green-600 hover:underline"
+              >
+                Running Veldmesh Alongside Commercial VPNs
+              </Link>
+            </li>
+          </ul>
+        </section>
 
         {/* Quick start */}
         <section id="quick-start" className="mb-14">
