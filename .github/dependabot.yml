@@ -24,14 +24,6 @@ updates:
     allow:
       - dependency-type: "direct"
       - dependency-type: "indirect"
-    # Ignore version tag updates (we only want SHA updates)
-    ignore:
-      - dependency-name: "*"
-        update-type: "version-update:semver-patch"
-      - dependency-name: "*"
-        update-type: "version-update:semver-minor"
-      - dependency-name: "*"
-        update-type: "version-update:semver-major"
 
   # Also update npm dependencies weekly
   - package-ecosystem: "npm"

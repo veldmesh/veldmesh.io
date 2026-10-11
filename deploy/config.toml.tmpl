@@ -3,23 +3,23 @@
 
 [vel]
 # This VM's mesh IP address
-mesh_ip = "{{VM_MESH_IP}}"
+mesh_ip = "${VM_MESH_IP}"
 
 # This VM's public endpoint (for mesh peers to connect)
-public_endpoint = "{{VM_PUBLIC_ENDPOINT}}"
+public_endpoint = "${VM_PUBLIC_ENDPOINT}"
 
 # Mesh port for vel protocol (UDP)
-mesh_port = {{VM_MESH_PORT}}
+mesh_port = ${VM_MESH_PORT}
 
 [peers.ironserver]
 # Ironserver's mesh IP address
-mesh_ip = "{{IRONSERVER_MESH_IP}}"
+mesh_ip = "${IRONSERVER_MESH_IP}"
 
 # Ironserver's public endpoint
-public_endpoint = "{{IRONSERVER_PUBLIC_ENDPOINT}}"
+public_endpoint = "${IRONSERVER_PUBLIC_ENDPOINT}"
 
 # Mesh port (typically same as VM_MESH_PORT)
-mesh_port = {{VM_MESH_PORT}}
+mesh_port = ${VM_MESH_PORT}
 
 # Static mode: pre-shared key or identity-based auth
 # The relay identity key is provisioned separately at /etc/velmesh/relay-identity.key

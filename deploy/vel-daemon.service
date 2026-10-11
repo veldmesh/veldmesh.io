@@ -7,6 +7,11 @@ Wants=network.target
 Type=simple
 User=vel
 Group=vel
+# NOTE: The vel-daemon binary must be pre-installed at /usr/local/bin/vel-daemon
+# on the VM before running this workflow. This can be done via:
+#   - Pre-baked VM image with vel-daemon installed
+#   - Configuration management (ansible, chef, puppet)
+#   - Manual installation before first deploy
 ExecStart=/usr/local/bin/vel-daemon --config /etc/vel/config.toml
 Restart=on-failure
 RestartSec=5
@@ -19,6 +24,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+StandardInput=null
 ReadWritePaths=/etc/vel
 
 # Capabilities for mesh networking (if needed)

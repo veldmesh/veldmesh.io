@@ -4,13 +4,23 @@ set -euo pipefail
 # Idempotent VM hardening script for veldmesh.io deployment
 # Usage: harden-vm.sh [--check]
 #   --check: verify hardening without making changes (exit 0 if compliant)
+#
+# Required environment variables:
+#   VM_MESH_PORT - Mesh port for vel protocol (UDP)
+#   IRONSERVER_MESH_IP - Ironserver's mesh IP address
+#   IRONSERVER_PUBLIC_ENDPOINT - Ironserver's public endpoint
+#   WAITLIST_BEARER_TOKEN - Bearer token for waitlist POST
+#   RELAY_IDENTITY_KEY_B64 (optional) - Base64-encoded relay identity key
+#
+# Optional environment variables:
+#   DEPLOY_USER - SSH deploy user (default: ubuntu)
 
 CHECK_MODE=false
 if [[ "${1:-}" == "--check" ]]; then
   CHECK_MODE=true
 fi
 
-DEPLOY_USER="${SUDO_USER:-ubuntu}"
+DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-ubuntu}}"
 VM_MESH_PORT="${VM_MESH_PORT:-51820}"
 VELDSITE_PATH="/opt/veldsite"
 VEL_CONFIG_PATH="/etc/vel/config.toml"
@@ -21,17 +31,26 @@ log() { echo "[harden-vm] $*"; }
 warn() { echo "[harden-vm] WARNING: $*" >&2; }
 err() { echo "[harden-vm] ERROR: $*" >&2; }
 
+validate_port() {
+  local port="$1"
+  if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+    err "Invalid port: $port (must be 1-65535)"
+    return 1
+  fi
+  return 0
+}
+
 check_ssh_config() {
   local sshd_config="/etc/ssh/sshd_config"
   local issues=()
 
-  if ! grep -q "^PermitRootLogin no" "$sshd_config"; then
+  if ! grep -qE "^\s*PermitRootLogin\s+no" "$sshd_config"; then
     issues+=("PermitRootLogin not set to 'no'")
   fi
-  if ! grep -q "^PasswordAuthentication no" "$sshd_config"; then
+  if ! grep -qE "^\s*PasswordAuthentication\s+no" "$sshd_config"; then
     issues+=("PasswordAuthentication not set to 'no'")
   fi
-  if ! grep -q "^AllowUsers.*${DEPLOY_USER}" "$sshd_config"; then
+  if ! grep -qE "^\s*AllowUsers\s+.*\b${DEPLOY_USER}\b" "$sshd_config"; then
     issues+=("AllowUsers does not include ${DEPLOY_USER}")
   fi
 
@@ -43,12 +62,17 @@ check_ssh_config() {
       return 1
     fi
     log "Hardening SSH configuration..."
-    sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' "$sshd_config"
-    sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$sshd_config"
-    if grep -q "^AllowUsers" "$sshd_config"; then
-      sed -i "s/^AllowUsers.*/AllowUsers ${DEPLOY_USER}/" "$sshd_config"
+    sed -i -E 's/^\s*#?\s*PermitRootLogin.*/PermitRootLogin no/' "$sshd_config"
+    sed -i -E 's/^\s*#?\s*PasswordAuthentication.*/PasswordAuthentication no/' "$sshd_config"
+    if grep -qE "^\s*AllowUsers" "$sshd_config"; then
+      sed -i -E "s/^\s*AllowUsers.*/AllowUsers ${DEPLOY_USER}/" "$sshd_config"
     else
       echo "AllowUsers ${DEPLOY_USER}" >> "$sshd_config"
+    fi
+    # Validate SSH config before reload to avoid lockout
+    if ! sshd -t; then
+      err "SSH config validation failed (sshd -t), NOT reloading"
+      return 1
     fi
     systemctl reload sshd
   fi
@@ -61,17 +85,19 @@ check_ufw() {
   if ! ufw status | grep -q "Status: active"; then
     issues+=("UFW is not active")
   fi
-  if ! ufw status | grep -q "22/tcp.*ALLOW"; then
+  # Use awk for robust column parsing of ufw status output
+  if ! ufw status | awk '$1 == "22/tcp" && $2 == "ALLOW" {found=1} END {exit !found}'; then
     issues+=("UFW rule for 22/tcp (SSH) missing")
   fi
-  if ! ufw status | grep -q "80/tcp.*ALLOW"; then
+  if ! ufw status | awk '$1 == "80/tcp" && $2 == "ALLOW" {found=1} END {exit !found}'; then
     issues+=("UFW rule for 80/tcp (HTTP) missing")
   fi
-  if ! ufw status | grep -q "443/tcp.*ALLOW"; then
+  if ! ufw status | awk '$1 == "443/tcp" && $2 == "ALLOW" {found=1} END {exit !found}'; then
     issues+=("UFW rule for 443/tcp (HTTPS) missing")
   fi
-  if ! ufw status | grep -q "${VM_MESH_PORT}/udp.*ALLOW"; then
-    issues+=("UFW rule for ${VM_MESH_PORT}/udp (vel mesh) missing")
+  local mesh_port_udp="${VM_MESH_PORT}/udp"
+  if ! ufw status | awk -v port="$mesh_port_udp" '$1 == port && $2 == "ALLOW" {found=1} END {exit !found}'; then
+    issues+=("UFW rule for ${mesh_port_udp} (vel mesh) missing")
   fi
   if ! ufw status | grep -q "Default deny.*incoming"; then
     issues+=("UFW default incoming policy is not 'deny'")
@@ -196,8 +222,11 @@ check_env_file() {
     if [[ "$owner" != "velsite" ]]; then
       issues+=("$ENV_FILE owned by $owner, expected velsite")
     fi
-    if ! grep -q "IRONSERVER_MESH_ADDR" "$ENV_FILE"; then
-      issues+=("$ENV_FILE missing IRONSERVER_MESH_ADDR")
+    if ! grep -q "IRONSERVER_MESH_IP" "$ENV_FILE"; then
+      issues+=("$ENV_FILE missing IRONSERVER_MESH_IP")
+    fi
+    if ! grep -q "IRONSERVER_PUBLIC_ENDPOINT" "$ENV_FILE"; then
+      issues+=("$ENV_FILE missing IRONSERVER_PUBLIC_ENDPOINT")
     fi
     if ! grep -q "WAITLIST_BEARER_TOKEN" "$ENV_FILE"; then
       issues+=("$ENV_FILE missing WAITLIST_BEARER_TOKEN")
@@ -213,7 +242,8 @@ check_env_file() {
     fi
     log "Writing environment file $ENV_FILE..."
     cat > "$ENV_FILE" <<EOF
-IRONSERVER_MESH_ADDR=${IRONSERVER_MESH_ADDR:-}
+IRONSERVER_MESH_IP=${IRONSERVER_MESH_IP:-}
+IRONSERVER_PUBLIC_ENDPOINT=${IRONSERVER_PUBLIC_ENDPOINT:-}
 WAITLIST_BEARER_TOKEN=${WAITLIST_BEARER_TOKEN:-}
 EOF
     chown velsite:velsite "$ENV_FILE"
@@ -260,6 +290,11 @@ check_relay_key() {
       if [[ "$owner" != "velmesh-relay" ]]; then
         issues+=("$RELAY_KEY_PATH owned by $owner, expected velmesh-relay")
       fi
+    fi
+
+    # In check mode, also ensure the velmesh-relay user exists if key is expected
+    if $CHECK_MODE && ! id -u velmesh-relay >/dev/null 2>&1; then
+      issues+=("User 'velmesh-relay' does not exist but RELAY_IDENTITY_KEY_B64 is set")
     fi
   fi
 
@@ -313,6 +348,11 @@ check_systemd_units() {
 }
 
 main() {
+  # Validate VM_MESH_PORT early
+  if ! validate_port "$VM_MESH_PORT"; then
+    exit 1
+  fi
+
   local all_ok=true
 
   check_ssh_config || all_ok=false
