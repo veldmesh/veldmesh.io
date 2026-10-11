@@ -100,7 +100,7 @@ fix_ssh_config() {
     if $CHECK_MODE; then
       report_issue "PermitRootLogin not set to 'no'"
     else
-      # Replace any existing PermitRootLogin line (commented or not) with correct value
+      # Delete all existing PermitRootLogin lines (commented or not), then add correct one
       sed -i -E '/^\s*#?\s*PermitRootLogin\s+/d' "$sshd_config"
       echo "PermitRootLogin no" >> "$sshd_config"
       echo "Set PermitRootLogin no"
@@ -161,13 +161,9 @@ fix_ufw() {
   if [[ "$default_incoming" != "deny" ]]; then
     if $CHECK_MODE; then
       report_issue "UFW default incoming policy is not 'deny' (current: $default_incoming)"
-    elif $FORCE_UFW_RESET; then
-      ufw --force reset
-      ufw default deny incoming
-      ufw default allow outgoing
-      echo "Reset UFW and set default deny incoming"
     else
-      echo "WARNING: UFW default incoming not 'deny'. Use --force-ufw-reset to fix." >&2
+      ufw default deny incoming
+      echo "Set default deny incoming"
     fi
     ((issues++))
   else
@@ -177,7 +173,7 @@ fix_ufw() {
   if [[ "$default_outgoing" != "allow" ]]; then
     if $CHECK_MODE; then
       report_issue "UFW default outgoing policy is not 'allow' (current: $default_outgoing)"
-    elif $FORCE_UFW_RESET; then
+    else
       ufw default allow outgoing
       echo "Set default allow outgoing"
     fi
@@ -200,11 +196,9 @@ fix_ufw() {
     else
       if $CHECK_MODE; then
         report_issue "UFW rule $rule missing"
-      elif $FORCE_UFW_RESET; then
+      else
         ufw allow "$rule"
         echo "Added UFW rule $rule"
-      else
-        echo "WARNING: UFW rule $rule missing. Use --force-ufw-reset to fix." >&2
       fi
       ((issues++))
     fi
@@ -216,11 +210,9 @@ fix_ufw() {
   else
     if $CHECK_MODE; then
       report_issue "UFW is not active"
-    elif $FORCE_UFW_RESET; then
+    else
       ufw --force enable
       echo "Enabled UFW"
-    else
-      echo "WARNING: UFW not active. Use --force-ufw-reset to enable." >&2
     fi
     ((issues++))
   fi
@@ -362,6 +354,16 @@ fix_users() {
       fi
       ((issues++))
     fi
+  else
+    if $CHECK_MODE; then
+      report_issue "Parent directory does not exist: $VELDSITE_PARENT"
+    else
+      mkdir -p "$VELDSITE_PARENT"
+      chown velsite:velsite "$VELDSITE_PARENT"
+      chmod 750 "$VELDSITE_PARENT"
+      echo "Created parent directory: $VELDSITE_PARENT"
+    fi
+    ((issues++))
   fi
 
   return $issues
@@ -471,6 +473,17 @@ fix_relay_key() {
 
   if [[ -n "$RELAY_IDENTITY_KEY_B64" ]]; then
     # Key is expected
+    # Ensure velmesh-relay user exists (in check mode too)
+    if ! id -u velmesh-relay &>/dev/null; then
+      if $CHECK_MODE; then
+        report_issue "User 'velmesh-relay' does not exist (required for relay key)"
+      else
+        useradd -r -s /usr/sbin/nologin -d /var/lib/velmesh-relay -m velmesh-relay
+        echo "Created user 'velmesh-relay'"
+      fi
+      ((issues++))
+    fi
+
     if [[ -f "$key_file" ]]; then
       local owner=$(stat -c '%U' "$key_file")
       local perms=$(stat -c '%a' "$key_file")

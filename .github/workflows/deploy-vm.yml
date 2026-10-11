@@ -23,11 +23,12 @@ permissions:
   pull-requests: read
 
 env:
-  # Action versions pinned to commit SHAs (updated weekly by dependabot)
-  ACTIONS_CHECKOUT_SHA: 11bd71901bbe5b1630ceea73d27597364c9af683
-  ACTIONS_SETUP_NODE_SHA: 60edb5dd545a775178f52524783378180af0d1f8
   # SSH options: use pre-populated known_hosts from VM_SSH_HOST_KEY secret
   SSH_OPTS: "-o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3"
+
+concurrency:
+  group: deploy-vm-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   label-check:
@@ -139,57 +140,64 @@ jobs:
             printf '%s\n' "$VM_SSH_HOST_KEY" > ~/.ssh/known_hosts
           else
             echo "WARNING: VM_SSH_HOST_KEY secret not set, falling back to TOFU (accept-new)" >&2
-            ssh-keyscan -H "${{ secrets.VM_SSH_HOST }}" >> ~/.ssh/known_hosts
+            ssh-keyscan -H "$VM_SSH_HOST" >> ~/.ssh/known_hosts
           fi
 
       - name: Check if first deploy (config.toml exists)
         id: first_deploy
         run: |
-          if ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "test -f /etc/vel/config.toml"; then
+          if ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "test -f /etc/vel/config.toml"; then
             echo "first_deploy=false" >> $GITHUB_OUTPUT
           else
             echo "first_deploy=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Verify vel-daemon binary exists on VM
+        run: |
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
+            if [[ ! -x /usr/local/bin/vel-daemon ]]; then
+              echo 'Error: /usr/local/bin/vel-daemon not found or not executable'
+              echo 'The vel-daemon binary must be pre-installed on the VM before deployment.'
+              exit 1
+            fi
+            echo 'vel-daemon binary found at /usr/local/bin/vel-daemon'
+          "
+
       - name: Copy hardening script to VM (restricted location)
         run: |
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/root/harden-vm.sh"
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "chmod 700 /root/harden-vm.sh"
+          scp -i ~/.ssh/vm_key $SSH_OPTS deploy/harden-vm.sh "$VM_SSH_USER@$VM_SSH_HOST:/root/harden-vm.sh"
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "chmod 700 /root/harden-vm.sh"
 
       - name: Run VM hardening (first deploy only)
         if: steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true'
         run: |
-          # Pass environment variables through sudo using bash -c with exports
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo bash -c '
-              export VM_MESH_PORT=\"${{ secrets.VM_MESH_PORT }}\"
-              export VM_DEPLOY_PATH=\"${{ secrets.VM_DEPLOY_PATH }}\"
-              export IRONSERVER_MESH_IP=\"${{ secrets.IRONSERVER_MESH_IP }}\"
-              export IRONSERVER_PUBLIC_ENDPOINT=\"${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}\"
-              export WAITLIST_BEARER_TOKEN=\"${{ secrets.WAITLIST_BEARER_TOKEN }}\"
-              export RELAY_IDENTITY_KEY_B64=\"${{ secrets.RELAY_IDENTITY_KEY_B64 }}\"
-              export VM_SSH_USER=\"${{ secrets.VM_SSH_USER }}\"
-              /root/harden-vm.sh
-            '
-          "
+          # Create env file on runner, copy to VM, then run hardening script with it
+          printf '%s\n' \
+            "export VM_MESH_PORT='$VM_MESH_PORT'" \
+            "export VM_DEPLOY_PATH='$VM_DEPLOY_PATH'" \
+            "export IRONSERVER_MESH_IP='$IRONSERVER_MESH_IP'" \
+            "export IRONSERVER_PUBLIC_ENDPOINT='$IRONSERVER_PUBLIC_ENDPOINT'" \
+            "export WAITLIST_BEARER_TOKEN='$WAITLIST_BEARER_TOKEN'" \
+            "export RELAY_IDENTITY_KEY_B64='$RELAY_IDENTITY_KEY_B64'" \
+            "export VM_SSH_USER='$VM_SSH_USER'" \
+            > /tmp/harden.env
+          scp -i ~/.ssh/vm_key $SSH_OPTS /tmp/harden.env "$VM_SSH_USER@$VM_SSH_HOST:/tmp/harden.env"
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "chmod 600 /tmp/harden.env && sudo bash -c 'source /tmp/harden.env && /root/harden-vm.sh' && rm -f /tmp/harden.env"
+          rm -f /tmp/harden.env
 
       - name: Render and deploy config.toml from template
         run: |
-          # Render template with secrets using envsubst for safe substitution
-          export VM_MESH_IP="${{ secrets.VM_MESH_IP }}"
-          export VM_PUBLIC_ENDPOINT="${{ secrets.VM_PUBLIC_ENDPOINT }}"
-          export VM_MESH_PORT="${{ secrets.VM_MESH_PORT }}"
-          export IRONSERVER_MESH_IP="${{ secrets.IRONSERVER_MESH_IP }}"
-          export IRONSERVER_PUBLIC_ENDPOINT="${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}"
-          envsubst < deploy/config.toml.tmpl > /tmp/config.toml
+          # Render template with secrets using envsubst (explicit variable list for safety)
+          envsubst '${VM_MESH_IP} ${VM_PUBLIC_ENDPOINT} ${VM_MESH_PORT} ${IRONSERVER_MESH_IP} ${IRONSERVER_PUBLIC_ENDPOINT}' \
+            < deploy/config.toml.tmpl > /tmp/config.toml
 
           # Validate rendered TOML
           python3 -c "import tomllib; tomllib.load(open('/tmp/config.toml', 'rb'))"
           echo "config.toml TOML validation passed"
 
           # Copy to VM
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/config.toml "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/config.toml"
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+          scp -i ~/.ssh/vm_key $SSH_OPTS /tmp/config.toml "$VM_SSH_USER@$VM_SSH_HOST:/tmp/config.toml"
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
             sudo mkdir -p /etc/vel
             sudo mv /tmp/config.toml /etc/vel/config.toml
             sudo chown vel:vel /etc/vel/config.toml
@@ -198,18 +206,18 @@ jobs:
 
       - name: Render and deploy systemd units with deploy path
         run: |
-          # Render veldsite.service with the deploy path
-          export DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
-          envsubst < deploy/veldsite.service.tmpl > /tmp/veldsite.service
+          # Render veldsite.service with the deploy path (explicit variable list)
+          export DEPLOY_PATH="$VM_DEPLOY_PATH"
+          envsubst '${DEPLOY_PATH}' < deploy/veldsite.service.tmpl > /tmp/veldsite.service
           # Validate systemd unit
           systemd-analyze verify /tmp/veldsite.service
           echo "veldsite.service validation passed"
           cp deploy/vel-daemon.service /tmp/vel-daemon.service
           systemd-analyze verify /tmp/vel-daemon.service
           echo "vel-daemon.service validation passed"
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/veldsite.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/veldsite.service"
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/vel-daemon.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/vel-daemon.service"
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+          scp -i ~/.ssh/vm_key $SSH_OPTS /tmp/veldsite.service "$VM_SSH_USER@$VM_SSH_HOST:/tmp/veldsite.service"
+          scp -i ~/.ssh/vm_key $SSH_OPTS /tmp/vel-daemon.service "$VM_SSH_USER@$VM_SSH_HOST:/tmp/vel-daemon.service"
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
             sudo mv /tmp/veldsite.service /etc/systemd/system/veldsite.service
             sudo mv /tmp/vel-daemon.service /etc/systemd/system/vel-daemon.service
             sudo systemctl daemon-reload
@@ -218,24 +226,24 @@ jobs:
       - name: Render and deploy env file
         run: |
           # Render env file with secrets (deployed every run for secret rotation)
-          cat > /tmp/velsite.env <<'ENVEOF'
-IRONSERVER_MESH_IP=${{ secrets.IRONSERVER_MESH_IP }}
-IRONSERVER_PUBLIC_ENDPOINT=${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}
-WAITLIST_BEARER_TOKEN=${{ secrets.WAITLIST_BEARER_TOKEN }}
-ENVEOF
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/velsite.env "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/velsite.env"
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo mv /tmp/velsite.env ${{ secrets.VM_DEPLOY_PATH }}/.env
-            sudo chown velsite:velsite ${{ secrets.VM_DEPLOY_PATH }}/.env
-            sudo chmod 600 ${{ secrets.VM_DEPLOY_PATH }}/.env
+          printf '%s\n%s\n%s\n' \
+            "IRONSERVER_MESH_IP=$IRONSERVER_MESH_IP" \
+            "IRONSERVER_PUBLIC_ENDPOINT=$IRONSERVER_PUBLIC_ENDPOINT" \
+            "WAITLIST_BEARER_TOKEN=$WAITLIST_BEARER_TOKEN" \
+            > /tmp/velsite.env
+          scp -i ~/.ssh/vm_key $SSH_OPTS /tmp/velsite.env "$VM_SSH_USER@$VM_SSH_HOST:/tmp/velsite.env"
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
+            sudo mv /tmp/velsite.env $VM_DEPLOY_PATH/.env
+            sudo chown velsite:velsite $VM_DEPLOY_PATH/.env
+            sudo chmod 600 $VM_DEPLOY_PATH/.env
           "
 
-      - name: Render and deploy relay identity key (if secret exists)
+      - name: Deploy relay identity key (if secret exists)
         run: |
-          if [[ -n "${{ secrets.RELAY_IDENTITY_KEY_B64 }}" ]]; then
-            printf '%s' "${{ secrets.RELAY_IDENTITY_KEY_B64 }}" | base64 -d > /tmp/relay-identity.key
-            scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/relay-identity.key "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/relay-identity.key"
-            ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+          if [[ -n "$RELAY_IDENTITY_KEY_B64" ]]; then
+            printf '%s' "$RELAY_IDENTITY_KEY_B64" | base64 -d > /tmp/relay-identity.key
+            scp -i ~/.ssh/vm_key $SSH_OPTS /tmp/relay-identity.key "$VM_SSH_USER@$VM_SSH_HOST:/tmp/relay-identity.key"
+            ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
               sudo mkdir -p /etc/velmesh
               sudo mv /tmp/relay-identity.key /etc/velmesh/relay-identity.key
               sudo chown velmesh-relay:velmesh-relay /etc/velmesh/relay-identity.key
@@ -246,54 +254,37 @@ ENVEOF
             echo "RELAY_IDENTITY_KEY_B64 not set, skipping relay key deployment"
           fi
 
-      - name: Verify vel-daemon binary exists on VM
-        run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            if [[ ! -x /usr/local/bin/vel-daemon ]]; then
-              echo 'Error: /usr/local/bin/vel-daemon not found or not executable'
-              echo 'The vel-daemon binary must be pre-installed on the VM before deployment.'
-              exit 1
-            fi
-            echo 'vel-daemon binary found at /usr/local/bin/vel-daemon'
-          "
-
       - name: Deploy Next.js app via rsync (with sudo for permissions)
         run: |
           rsync -avz --delete \
-            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
+            -e "ssh -i ~/.ssh/vm_key $SSH_OPTS" \
             --rsync-path="sudo rsync" \
             .next/standalone/ \
-            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/"
+            "$VM_SSH_USER@$VM_SSH_HOST:$VM_DEPLOY_PATH/"
 
           rsync -avz --delete \
-            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
+            -e "ssh -i ~/.ssh/vm_key $SSH_OPTS" \
             --rsync-path="sudo rsync" \
             public/ \
-            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/public/"
+            "$VM_SSH_USER@$VM_SSH_HOST:$VM_DEPLOY_PATH/public/"
 
           rsync -avz --delete \
-            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
+            -e "ssh -i ~/.ssh/vm_key $SSH_OPTS" \
             --rsync-path="sudo rsync" \
             .next/static/ \
-            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/.next/static/"
+            "$VM_SSH_USER@$VM_SSH_HOST:$VM_DEPLOY_PATH/.next/static/"
 
       - name: Fix file ownership after rsync
         run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo chown -R velsite:velsite ${{ secrets.VM_DEPLOY_PATH }}
-          "
-
-      - name: Reload vel-daemon after config.toml changes
-        run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo systemctl reload vel-daemon || sudo systemctl restart vel-daemon
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
+            sudo chown -R velsite:velsite $VM_DEPLOY_PATH
           "
 
       - name: Enable and start services
         run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo systemctl enable --now veld-daemon veldsite
-            sudo systemctl status veld-daemon --no-pager
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
+            sudo systemctl enable --now vel-daemon veldsite
+            sudo systemctl status vel-daemon --no-pager
             sudo systemctl status veldsite --no-pager
           "
 
@@ -301,8 +292,8 @@ ENVEOF
         run: |
           # Poll for services to become active (max 60 seconds)
           for i in {1..30}; do
-            if ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" \
-              "systemctl is-active --quiet veld-daemon && systemctl is-active --quiet veldsite"; then
+            if ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" \
+              "systemctl is-active --quiet vel-daemon && systemctl is-active --quiet veldsite"; then
               echo "Services are active"
               break
             fi
@@ -315,21 +306,20 @@ ENVEOF
 
       - name: Verify hardening (run --check)
         run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
             sudo /root/harden-vm.sh --check
           "
 
       - name: Verify deployment
         run: |
           # Check health endpoint or landing page
-          DOMAIN="${{ secrets.DEPLOY_DOMAIN }}"
-          if [[ -z "$DOMAIN" ]]; then
+          if [[ -z "$DEPLOY_DOMAIN" ]]; then
             echo "Error: DEPLOY_DOMAIN secret not set, cannot verify deployment"
             exit 1
           fi
           # Retry curl with backoff (max 30 seconds)
           for i in {1..15}; do
-            if curl -fSs --max-time 10 "https://$DOMAIN" > /dev/null; then
+            if curl -fSs --max-time 10 "https://$DEPLOY_DOMAIN" > /dev/null; then
               echo "Landing page accessible"
               break
             fi
@@ -341,7 +331,7 @@ ENVEOF
           done
           # Check waitlist endpoint responds (may return 202 on mesh failure)
           for i in {1..15}; do
-            HTTP_CODE=$(curl -fSs --max-time 10 -X POST "https://$DOMAIN/api/waitlist" \
+            HTTP_CODE=$(curl -fSs --max-time 10 -X POST "https://$DEPLOY_DOMAIN/api/waitlist" \
               -H "Content-Type: application/json" \
               -d '{"email":"test@example.com"}' \
               -w "%{http_code}" -o /dev/null || echo "000")
@@ -358,13 +348,13 @@ ENVEOF
 
       - name: Verify veld daemon peer connection
         run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
             sudo journalctl -u vel-daemon --no-pager -n 50 | grep -i 'peer.*connected\|connected.*peer' && echo 'Veld daemon shows peer connected' || echo 'Veld daemon peer connection not yet visible in logs'
           "
 
       - name: Verify systemd user contexts
         run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
             echo 'velsite user:' \$(systemctl show -p User --value veldsite)
             echo 'vel-daemon user:' \$(systemctl show -p User --value vel-daemon)
             test \"\$(systemctl show -p User --value veldsite)\" = \"velsite\" && echo 'velsite runs as velsite'
@@ -374,6 +364,6 @@ ENVEOF
       - name: Cleanup temporary files on VM
         if: always()
         run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo rm -f /tmp/config.toml /tmp/veldsite.service /tmp/vel-daemon.service /tmp/velsite.env /tmp/relay-identity.key /root/harden-vm.sh
+          ssh -i ~/.ssh/vm_key $SSH_OPTS "$VM_SSH_USER@$VM_SSH_HOST" "
+            sudo rm -f /tmp/config.toml /tmp/veldsite.service /tmp/vel-daemon.service /tmp/velsite.env /tmp/relay-identity.key /tmp/harden.env /root/harden-vm.sh
           " || true
