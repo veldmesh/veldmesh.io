@@ -19,6 +19,11 @@ set -euo pipefail
 # Note: This script assumes Ubuntu/Debian (uses apt-get, systemd, ufw).
 # For other distributions, the package installation and service management
 # commands would need to be adapted.
+#
+# WARNING: This script uses `ufw --force reset` which removes ALL existing
+# firewall rules. It assumes a dedicated VM where only the rules managed
+# by this script are needed. If the VM runs other services requiring
+# firewall rules, they must be re-added manually after running this script.
 
 CHECK_MODE=false
 if [[ "${1:-}" == "--check" ]]; then
@@ -40,6 +45,20 @@ validate_port() {
   local port="$1"
   if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
     err "Invalid port: $port (must be 1-65535)"
+    return 1
+  fi
+  return 0
+}
+
+validate_absolute_path() {
+  local path="$1"
+  if [[ "$path" != /* ]]; then
+    err "Path must be absolute: $path"
+    return 1
+  fi
+  # Basic path traversal check
+  if [[ "$path" == *".."* ]]; then
+    err "Path contains '..' traversal: $path"
     return 1
   fi
   return 0
@@ -68,11 +87,11 @@ check_ssh_config() {
     fi
     log "Hardening SSH configuration..."
     # Delete any existing matching lines to avoid duplicates, then append correct ones
-    sed -i -E '/^\s*#?\s*PermitRootLogin/d' "$sshd_config"
+    sed -i -E '/^\s*#?\s*PermitRootLogin\s/d' "$sshd_config"
+    sed -i -E '/^\s*#?\s*PasswordAuthentication\s/d' "$sshd_config"
+    sed -i -E '/^\s*AllowUsers\s/d' "$sshd_config"
     echo "PermitRootLogin no" >> "$sshd_config"
-    sed -i -E '/^\s*#?\s*PasswordAuthentication/d' "$sshd_config"
     echo "PasswordAuthentication no" >> "$sshd_config"
-    sed -i -E '/^\s*AllowUsers/d' "$sshd_config"
     echo "AllowUsers ${DEPLOY_USER}" >> "$sshd_config"
     # Validate SSH config before reload to avoid lockout
     if ! sshd -t; then
@@ -116,7 +135,7 @@ check_ufw() {
       return 1
     fi
     log "Configuring UFW..."
-    # Note: ufw --force reset removes ALL existing rules.
+    # WARNING: ufw --force reset removes ALL existing rules.
     # This script assumes a dedicated VM where only these rules are needed.
     # If the VM runs other services requiring firewall rules, they must be re-added manually.
     ufw --force reset
@@ -190,6 +209,12 @@ check_users() {
   if [[ ! -d "/home/velsite" ]]; then
     issues+=("Home directory /home/velsite missing")
   fi
+
+  # Validate VM_DEPLOY_PATH
+  if ! validate_absolute_path "$VELDSITE_PATH"; then
+    issues+=("Invalid VM_DEPLOY_PATH: $VELDSITE_PATH")
+  fi
+
   if [[ ! -d "$VELDSITE_PATH" ]]; then
     issues+=("Directory $VELDSITE_PATH missing")
   else
@@ -233,14 +258,27 @@ check_env_file() {
     if [[ "$owner" != "velsite" ]]; then
       issues+=("$ENV_FILE owned by $owner, expected velsite")
     fi
-    if ! grep -q "IRONSERVER_MESH_IP" "$ENV_FILE"; then
-      issues+=("$ENV_FILE missing IRONSERVER_MESH_IP")
-    fi
-    if ! grep -q "IRONSERVER_PUBLIC_ENDPOINT" "$ENV_FILE"; then
-      issues+=("$ENV_FILE missing IRONSERVER_PUBLIC_ENDPOINT")
-    fi
-    if ! grep -q "WAITLIST_BEARER_TOKEN" "$ENV_FILE"; then
-      issues+=("$ENV_FILE missing WAITLIST_BEARER_TOKEN")
+    # In check mode, verify values match expected secrets
+    if $CHECK_MODE; then
+      if ! grep -q "^IRONSERVER_MESH_IP=${IRONSERVER_MESH_IP:-}" "$ENV_FILE"; then
+        issues+=("$ENV_FILE IRONSERVER_MESH_IP value mismatch")
+      fi
+      if ! grep -q "^IRONSERVER_PUBLIC_ENDPOINT=${IRONSERVER_PUBLIC_ENDPOINT:-}" "$ENV_FILE"; then
+        issues+=("$ENV_FILE IRONSERVER_PUBLIC_ENDPOINT value mismatch")
+      fi
+      if ! grep -q "^WAITLIST_BEARER_TOKEN=${WAITLIST_BEARER_TOKEN:-}" "$ENV_FILE"; then
+        issues+=("$ENV_FILE WAITLIST_BEARER_TOKEN value mismatch")
+      fi
+    else
+      if ! grep -q "IRONSERVER_MESH_IP" "$ENV_FILE"; then
+        issues+=("$ENV_FILE missing IRONSERVER_MESH_IP")
+      fi
+      if ! grep -q "IRONSERVER_PUBLIC_ENDPOINT" "$ENV_FILE"; then
+        issues+=("$ENV_FILE missing IRONSERVER_PUBLIC_ENDPOINT")
+      fi
+      if ! grep -q "WAITLIST_BEARER_TOKEN" "$ENV_FILE"; then
+        issues+=("$ENV_FILE missing WAITLIST_BEARER_TOKEN")
+      fi
     fi
   fi
 
@@ -348,8 +386,6 @@ check_systemd_units() {
   local issues=()
 
   for unit in veldsite veld-daemon; do
-    # In check mode, only verify User= directive matches expected user.
-    # Do NOT check is-active status, as services may not be deployed yet.
     local expected_user=""
     if [[ "$unit" == "velsite" ]]; then
       expected_user="velsite"
@@ -361,6 +397,14 @@ check_systemd_units() {
       actual_user=$(systemctl show -p User --value "$unit" 2>/dev/null || echo "")
       if [[ "$actual_user" != "$expected_user" ]]; then
         issues+=("Service $unit runs as user '$actual_user', expected '$expected_user'")
+      fi
+    fi
+    # In check mode, if service unit file exists, also verify it's active
+    if $CHECK_MODE; then
+      if systemctl cat "$unit" >/dev/null 2>&1; then
+        if ! systemctl is-active --quiet "$unit"; then
+          issues+=("Service $unit is not active")
+        fi
       fi
     fi
   done
@@ -379,6 +423,11 @@ check_systemd_units() {
 main() {
   # Validate VM_MESH_PORT early
   if ! validate_port "$VM_MESH_PORT"; then
+    exit 1
+  fi
+
+  # Validate VM_DEPLOY_PATH
+  if ! validate_absolute_path "${VM_DEPLOY_PATH:-/opt/veldsite/app}"; then
     exit 1
   fi
 

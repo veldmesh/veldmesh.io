@@ -26,7 +26,7 @@ env:
   # Action versions pinned to commit SHAs (updated weekly by dependabot)
   ACTIONS_CHECKOUT_SHA: 11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
   ACTIONS_SETUP_NODE_SHA: 60edb5dd545a775178f52524783378180af0d1f8 # v4.1.0
-  SSH_OPTS: "-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3"
+  SSH_OPTS: "-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3"
 
 jobs:
   label-check:
@@ -84,25 +84,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
 
       - name: Setup Node.js
         uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         with:
           node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: npm ci
 
       - name: Build Next.js standalone
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: npm run build
 
       - name: Verify standalone output
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           if [[ ! -d ".next/standalone" ]]; then
             echo "Error: .next/standalone not found. Ensure next.config.js has output: 'standalone'"
@@ -115,25 +110,23 @@ jobs:
           echo "Standalone build verified."
 
       - name: Install gettext-base for envsubst
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: sudo apt-get update && sudo apt-get install -y gettext-base
 
       - name: Configure SSH
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           mkdir -p ~/.ssh
-          # Handle both base64-encoded and raw private keys
-          if echo "${{ secrets.VM_SSH_KEY }}" | grep -q "-----BEGIN"; then
-            echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
-          else
-            echo "${{ secrets.VM_SSH_KEY }}" | base64 -d > ~/.ssh/vm_key
+          # Handle both base64-encoded and raw private keys, including multi-line PEM keys
+          printf '%s' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
+          # If the key appears to be base64 (no PEM headers), decode it
+          if ! grep -q "-----BEGIN" ~/.ssh/vm_key; then
+            base64 -d ~/.ssh/vm_key > ~/.ssh/vm_key.tmp && mv ~/.ssh/vm_key.tmp ~/.ssh/vm_key
           fi
           chmod 600 ~/.ssh/vm_key
+          # Use accept-new: only accepts unseen keys, rejects changed keys (prevents MITM)
           ssh-keyscan -H "${{ secrets.VM_SSH_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Check if first deploy (config.toml exists)
         id: first_deploy
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           if ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "test -f /etc/vel/config.toml"; then
             echo "first_deploy=false" >> $GITHUB_OUTPUT
@@ -141,28 +134,31 @@ jobs:
             echo "first_deploy=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Copy hardening script to VM
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
+      - name: Copy hardening script to VM (restricted location)
         run: |
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden-vm.sh"
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/root/harden-vm.sh"
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "chmod 700 /root/harden-vm.sh"
+
+      - name: Write hardening env file to VM
+        if: steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true'
+        run: |
+          printf 'VM_MESH_PORT="%s"\n' "${{ secrets.VM_MESH_PORT }}" > /tmp/harden.env
+          printf 'VM_DEPLOY_PATH="%s"\n' "${{ secrets.VM_DEPLOY_PATH }}" >> /tmp/harden.env
+          printf 'IRONSERVER_MESH_IP="%s"\n' "${{ secrets.IRONSERVER_MESH_IP }}" >> /tmp/harden.env
+          printf 'IRONSERVER_PUBLIC_ENDPOINT="%s"\n' "${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}" >> /tmp/harden.env
+          printf 'WAITLIST_BEARER_TOKEN="%s"\n' "${{ secrets.WAITLIST_BEARER_TOKEN }}" >> /tmp/harden.env
+          printf 'RELAY_IDENTITY_KEY_B64="%s"\n' "${{ secrets.RELAY_IDENTITY_KEY_B64 }}" >> /tmp/harden.env
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/harden.env "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden.env"
 
       - name: Run VM hardening (first deploy only)
-        if: (steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true'))
+        if: steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true'
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo -E bash -c '
-              export VM_MESH_PORT="${{ secrets.VM_MESH_PORT }}"
-              export VM_DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
-              export IRONSERVER_MESH_IP="${{ secrets.IRONSERVER_MESH_IP }}"
-              export IRONSERVER_PUBLIC_ENDPOINT="${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}"
-              export WAITLIST_BEARER_TOKEN="${{ secrets.WAITLIST_BEARER_TOKEN }}"
-              export RELAY_IDENTITY_KEY_B64="${{ secrets.RELAY_IDENTITY_KEY_B64 }}"
-              /tmp/harden-vm.sh
-            '
+            source /tmp/harden.env
+            sudo -E bash /root/harden-vm.sh
           "
 
       - name: Render and deploy config.toml from template
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Render template with secrets using envsubst for safe substitution
           export VM_MESH_IP="${{ secrets.VM_MESH_IP }}"
@@ -171,6 +167,9 @@ jobs:
           export IRONSERVER_MESH_IP="${{ secrets.IRONSERVER_MESH_IP }}"
           export IRONSERVER_PUBLIC_ENDPOINT="${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}"
           envsubst < deploy/config.toml.tmpl > /tmp/config.toml
+
+          # Validate TOML syntax
+          python3 -c "import tomllib; tomllib.load(open('/tmp/config.toml', 'rb'))"
 
           # Copy to VM
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/config.toml "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/config.toml"
@@ -182,12 +181,17 @@ jobs:
           "
 
       - name: Render and deploy systemd units with deploy path
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Render veldsite.service with the deploy path
           export DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
           envsubst < deploy/veldsite.service.tmpl > /tmp/veldsite.service
+
+          # Validate systemd unit
+          systemd-analyze verify /tmp/veldsite.service
+
           cp deploy/vel-daemon.service /tmp/vel-daemon.service
+          systemd-analyze verify /tmp/vel-daemon.service
+
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/veldsite.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/veldsite.service"
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/vel-daemon.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/vel-daemon.service"
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
@@ -196,8 +200,35 @@ jobs:
             sudo systemctl daemon-reload
           "
 
+      - name: Render and deploy environment file (every deploy)
+        run: |
+          # Render environment file with current secrets
+          printf 'IRONSERVER_MESH_IP=%s\n' "${{ secrets.IRONSERVER_MESH_IP }}" > /tmp/velsite.env
+          printf 'IRONSERVER_PUBLIC_ENDPOINT=%s\n' "${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}" >> /tmp/velsite.env
+          printf 'WAITLIST_BEARER_TOKEN=%s\n' "${{ secrets.WAITLIST_BEARER_TOKEN }}" >> /tmp/velsite.env
+
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/velsite.env "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/velsite.env"
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo mv /tmp/velsite.env ${{ secrets.VM_DEPLOY_PATH }}/.env
+            sudo chown velsite:velsite ${{ secrets.VM_DEPLOY_PATH }}/.env
+            sudo chmod 600 ${{ secrets.VM_DEPLOY_PATH }}/.env
+          "
+
+      - name: Provision relay identity key (if secret exists)
+        if: env.RELAY_IDENTITY_KEY_B64 != ''
+        run: |
+          # Write relay key to temp file on runner, then copy
+          printf '%s' "${{ secrets.RELAY_IDENTITY_KEY_B64 }}" | base64 -d > /tmp/relay-identity.key
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/relay-identity.key "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/relay-identity.key"
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo mkdir -p /etc/velmesh
+            sudo id -u velmesh-relay >/dev/null 2>&1 || sudo useradd -r -M -d /nonexistent -s /usr/sbin/nologin velmesh-relay
+            sudo mv /tmp/relay-identity.key /etc/velmesh/relay-identity.key
+            sudo chown velmesh-relay:velmesh-relay /etc/velmesh/relay-identity.key
+            sudo chmod 600 /etc/velmesh/relay-identity.key
+          "
+
       - name: Verify vel-daemon binary exists on VM
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             if [[ ! -x /usr/local/bin/vel-daemon ]]; then
@@ -208,8 +239,7 @@ jobs:
             echo '✓ vel-daemon binary found at /usr/local/bin/vel-daemon'
           "
 
-      - name: Deploy Next.js app via rsync
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
+      - name: Deploy Next.js app via rsync (with ownership fix)
         run: |
           rsync -avz --delete \
             -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
@@ -229,8 +259,18 @@ jobs:
             .next/static/ \
             "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/.next/static/"
 
+          # Fix ownership after rsync (velsite needs write access for ISR/cache)
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo chown -R velsite:velsite ${{ secrets.VM_DEPLOY_PATH }}
+          "
+
+      - name: Restart vel-daemon to pick up config changes
+        run: |
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo systemctl reload vel-daemon || sudo systemctl restart vel-daemon
+          "
+
       - name: Enable and start services
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo systemctl enable --now veld-daemon veldsite
@@ -239,7 +279,6 @@ jobs:
           "
 
       - name: Wait for services to be ready
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Poll for services to become active (max 60 seconds)
           for i in {1..30}; do
@@ -255,28 +294,29 @@ jobs:
             sleep 2
           done
 
+      - name: Write hardening check env file to VM
+        run: |
+          printf 'VM_MESH_PORT="%s"\n' "${{ secrets.VM_MESH_PORT }}" > /tmp/harden-check.env
+          printf 'VM_DEPLOY_PATH="%s"\n' "${{ secrets.VM_DEPLOY_PATH }}" >> /tmp/harden-check.env
+          printf 'IRONSERVER_MESH_IP="%s"\n' "${{ secrets.IRONSERVER_MESH_IP }}" >> /tmp/harden-check.env
+          printf 'IRONSERVER_PUBLIC_ENDPOINT="%s"\n' "${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}" >> /tmp/harden-check.env
+          printf 'WAITLIST_BEARER_TOKEN="%s"\n' "${{ secrets.WAITLIST_BEARER_TOKEN }}" >> /tmp/harden-check.env
+          printf 'RELAY_IDENTITY_KEY_B64="%s"\n' "${{ secrets.RELAY_IDENTITY_KEY_B64 }}" >> /tmp/harden-check.env
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/harden-check.env "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden-check.env"
+
       - name: Verify hardening (run --check)
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo -E bash -c '
-              export VM_MESH_PORT="${{ secrets.VM_MESH_PORT }}"
-              export VM_DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
-              export IRONSERVER_MESH_IP="${{ secrets.IRONSERVER_MESH_IP }}"
-              export IRONSERVER_PUBLIC_ENDPOINT="${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}"
-              export WAITLIST_BEARER_TOKEN="${{ secrets.WAITLIST_BEARER_TOKEN }}"
-              export RELAY_IDENTITY_KEY_B64="${{ secrets.RELAY_IDENTITY_KEY_B64 }}"
-              /tmp/harden-vm.sh --check
-            '
+            source /tmp/harden-check.env
+            sudo -E bash /root/harden-vm.sh --check
           "
 
       - name: Verify deployment
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Check health endpoint or landing page
           DOMAIN="${{ secrets.DEPLOY_DOMAIN }}"
           if [[ -z "$DOMAIN" ]]; then
-            echo "DEPLOY_DOMAIN secret not set, skipping HTTP verification"
+            echo "::warning::DEPLOY_DOMAIN secret not set, skipping HTTP verification"
             exit 0
           fi
           # Retry curl with backoff (max 30 seconds)
@@ -309,14 +349,12 @@ jobs:
           done
 
       - name: Verify veld daemon peer connection
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo journalctl -u vel-daemon --no-pager -n 50 | grep -i 'peer.*connected\|connected.*peer' && echo '✓ Veld daemon shows peer connected' || echo '⚠ Veld daemon peer connection not yet visible in logs'
           "
 
       - name: Verify systemd user contexts
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             echo 'velsite user:' \$(systemctl show -p User --value veldsite)
@@ -324,3 +362,10 @@ jobs:
             test \"\$(systemctl show -p User --value veldsite)\" = \"velsite\" && echo '✓ veldsite runs as velsite'
             test \"\$(systemctl show -p User --value vel-daemon)\" = \"vel\" && echo '✓ vel-daemon runs as vel'
           "
+
+      - name: Cleanup temporary files on VM
+        if: always()
+        run: |
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            rm -f /tmp/config.toml /tmp/veldsite.service /tmp/vel-daemon.service /tmp/velsite.env /tmp/relay-identity.key /root/harden-vm.sh /tmp/harden.env /tmp/harden-check.env
+          " || true
