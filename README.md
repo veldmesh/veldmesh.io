@@ -63,6 +63,12 @@ them in your environment (never commit values — see `.env.example`):
 | Webhook | `WAITLIST_WEBHOOK_URL` is set                                                | `WAITLIST_WEBHOOK_URL`, `WAITLIST_WEBHOOK_TOKEN` (optional; sent as `Authorization: Bearer <token>`)                              |
 | Email  | `SMTP_HOST`, `SMTP_USER` **and** `WAITLIST_NOTIFY_TO` are set                | `SMTP_HOST`, `SMTP_PORT` (default `587`; `465` switches to implicit TLS), `SMTP_USER` (required; also the From address), `SMTP_PASS` (optional), `WAITLIST_NOTIFY_TO` |
 
+Both sinks apply the same 10-second deadline (`SINK_TIMEOUT_MS`): the
+webhook via `AbortSignal.timeout`, the email sink by racing `sendMail`
+against a timer. A sink that misses the deadline counts as failed, so the
+request either succeeds via the remaining sink or returns `502` for a
+retry.
+
 **Webhook** — POSTs the signup as JSON:
 
 ```json
@@ -88,7 +94,9 @@ runtime dependencies beyond SMTP itself, and is the standard, well-
 maintained choice in the Node ecosystem. One pooled transporter is created
 per SMTP configuration and reused across signups, so each signup reuses an
 established SMTP connection instead of paying for a fresh TCP/TLS
-handshake. The message is sent from `SMTP_USER`, which must be an address
+handshake. If the SMTP configuration changes at runtime, the previous
+transporter is closed so its pooled sockets are not leaked. The message is
+sent from `SMTP_USER`, which must be an address
 the relay is authorized to send from (SPF/DKIM alignment) — the sink stays
 disabled without it.
 
@@ -119,5 +127,6 @@ handler with fully mocked sinks (fetch and nodemailer). Covered: email
 validation, consent enforcement, JSON/body-size rejection, honeypot
 behavior, per-IP rate limiting (burst, block, refill, stale-bucket sweep,
 requests without proxy headers), sink selection, sink failure fallback,
-SMTP transporter reuse, the `SMTP_USER` requirement, `503` when
-unconfigured, and the generic success contract.
+SMTP transporter reuse (and closing the previous pool when the SMTP
+configuration changes), the 10-second sink timeout, the `SMTP_USER`
+requirement, `503` when unconfigured, and the generic success contract.

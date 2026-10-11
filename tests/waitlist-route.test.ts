@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-const { fetchMock, sendMailMock, createTransportMock } = vi.hoisted(() => {
+const { fetchMock, sendMailMock, createTransportMock, transporters } = vi.hoisted(() => {
   interface SentMail {
     from?: string
     to?: string
@@ -16,16 +16,23 @@ const { fetchMock, sendMailMock, createTransportMock } = vi.hoisted(() => {
     auth?: { user?: string; pass?: string }
   }
   const sendMailMock = vi.fn((_mail: SentMail) => Promise.resolve({}))
-  const createTransportMock = vi.fn((_options: TransportOptions) => ({
-    sendMail: sendMailMock,
-  }))
-  return { fetchMock: vi.fn(), sendMailMock, createTransportMock }
+  const transporters: Array<{
+    sendMail: typeof sendMailMock
+    close: ReturnType<typeof vi.fn>
+  }> = []
+  const createTransportMock = vi.fn((_options: TransportOptions) => {
+    const transporter = { sendMail: sendMailMock, close: vi.fn() }
+    transporters.push(transporter)
+    return transporter
+  })
+  return { fetchMock: vi.fn(), sendMailMock, createTransportMock, transporters }
 })
 
 vi.mock("nodemailer", () => ({
   default: { createTransport: createTransportMock },
 }))
 
+import { SINK_TIMEOUT_MS } from "@/lib/waitlist/sinks"
 import { HONEYPOT_FIELD } from "@/lib/waitlist/validation"
 import { rateLimitBucketCount } from "@/lib/waitlist/rate-limit"
 import { POST } from "@/app/api/waitlist/route"
@@ -90,6 +97,7 @@ beforeEach(() => {
   fetchMock.mockReset()
   sendMailMock.mockReset()
   createTransportMock.mockClear()
+  transporters.splice(0)
   vi.useFakeTimers()
   vi.setSystemTime(new Date("2026-10-08T12:00:00Z"))
 })
@@ -412,6 +420,46 @@ describe("POST /api/waitlist — sink selection", () => {
     expect(res.status).toBe(503)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(sendMailMock).not.toHaveBeenCalled()
+  })
+
+  it("treats an email sink that never completes as failed after the sink timeout", async () => {
+    setEnv(SMTP_ENV)
+    sendMailMock.mockReturnValue(new Promise(() => {}))
+    const pending = POST(makeRequest(validPayload(), "203.0.113.80"))
+    // sendMail neither resolves nor rejects; only the route's explicit
+    // deadline can end the wait, turning the hung sink into a failure.
+    await vi.advanceTimersByTimeAsync(SINK_TIMEOUT_MS)
+    const res = await pending
+    expect(res.status).toBe(502)
+    expect((await res.json()).error).toBeTruthy()
+  })
+
+  it("still succeeds via the webhook when the email sink hangs", async () => {
+    setEnv({ ...WEBHOOK_ENV, ...SMTP_ENV })
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
+    sendMailMock.mockReturnValue(new Promise(() => {}))
+    const pending = POST(makeRequest(validPayload(), "203.0.113.81"))
+    await vi.advanceTimersByTimeAsync(SINK_TIMEOUT_MS)
+    const res = await pending
+    expect(res.status).toBe(200)
+    expect((await res.json()).ok).toBe(true)
+  })
+
+  it("closes the previous pooled transporter when the SMTP configuration changes", async () => {
+    sendMailMock.mockResolvedValue({})
+    setEnv({ ...SMTP_ENV, SMTP_HOST: "smtp-a.example.com" })
+    const first = await POST(makeRequest(validPayload(), "203.0.113.82"))
+    expect(first.status).toBe(200)
+
+    setEnv({ ...SMTP_ENV, SMTP_HOST: "smtp-b.example.com" })
+    const second = await POST(makeRequest(validPayload(), "203.0.113.83"))
+    expect(second.status).toBe(200)
+
+    expect(createTransportMock).toHaveBeenCalledTimes(2)
+    // The first pool is torn down so its sockets are not leaked; the
+    // transporter for the new configuration stays open for reuse.
+    expect(transporters[0].close).toHaveBeenCalledTimes(1)
+    expect(transporters[1].close).not.toHaveBeenCalled()
   })
 })
 

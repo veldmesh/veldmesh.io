@@ -64,8 +64,11 @@ type Transporter = ReturnType<typeof nodemailer.createTransport>
 
 // One pooled transporter per SMTP configuration, created lazily on first
 // use and reused across requests, so each signup does not pay for a fresh
-// TCP/TLS connection plus SMTP handshake. The pool closes idle connections
-// on its own; there is nothing to tear down at shutdown.
+// TCP/TLS connection plus SMTP handshake. If the SMTP settings change at
+// runtime (rotated credentials, different relay), the previous pool is
+// closed so its sockets are not leaked before the new one is cached. The
+// pool closes idle connections on its own; there is nothing to tear down
+// at shutdown.
 let cachedTransporter: { key: string; transporter: Transporter } | null = null
 
 function getTransporter(env: Record<string, string | undefined>): Transporter {
@@ -78,10 +81,28 @@ function getTransporter(env: Record<string, string | undefined>): Transporter {
     auth: { user: env.SMTP_USER as string, pass: env.SMTP_PASS },
   }
   const key = JSON.stringify(options)
-  if (!cachedTransporter || cachedTransporter.key !== key) {
+  if (cachedTransporter && cachedTransporter.key !== key) {
+    cachedTransporter.transporter.close()
+    cachedTransporter = null
+  }
+  if (!cachedTransporter) {
     cachedTransporter = { key, transporter: nodemailer.createTransport(options) }
   }
   return cachedTransporter.transporter
+}
+
+// The webhook sink bounds its latency with AbortSignal.timeout; sendMail
+// has no such built-in deadline, so race it against one explicitly. A hung
+// SMTP conversation fails the sink (letting the route fall back or return
+// 502) instead of holding the request open; nodemailer's own socket
+// timeouts eventually clean up the wedged connection. The timer is cleared
+// as soon as the race settles, so a fast send leaves nothing dangling.
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`sink timed out after ${timeoutMs}ms`)), timeoutMs)
+  })
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer))
 }
 
 export async function sendToEmail(
@@ -103,12 +124,15 @@ export async function sendToEmail(
       `Referrer:     ${record.referrer ?? "—"}`,
     ]
 
-    await transporter.sendMail({
-      from: env.SMTP_USER as string,
-      to: env.WAITLIST_NOTIFY_TO as string,
-      subject: `New waitlist signup: ${record.email}`,
-      text: lines.join("\n"),
-    })
+    await withTimeout(
+      transporter.sendMail({
+        from: env.SMTP_USER as string,
+        to: env.WAITLIST_NOTIFY_TO as string,
+        subject: `New waitlist signup: ${record.email}`,
+        text: lines.join("\n"),
+      }),
+      SINK_TIMEOUT_MS
+    )
     return true
   } catch {
     return false
