@@ -1,0 +1,45 @@
+# Caddy configuration for veldmesh.io
+# This file is managed outside the deploy workflow (e.g., via configuration management)
+# but is documented here for reference.
+#
+# Deploy to /etc/caddy/Caddyfile on the VM and run: sudo systemctl reload caddy
+
+{
+    # ACME TLS via Let's Encrypt
+    email admin@velmesh.io
+    acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+velmesh.io {
+    # Reverse proxy to Next.js standalone server on localhost:3000
+    reverse_proxy localhost:3000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/velmesh-access.log
+        format json
+    }
+    log {
+        output file /var/log/caddy/velmesh-error.log
+        level ERROR
+        format json
+    }
+}
+
+# Optional: redirect www to apex
+www.velmesh.io {
+    redir https://velmesh.io{uri} permanent
+}
