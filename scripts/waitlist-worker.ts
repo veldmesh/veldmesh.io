@@ -1,12 +1,13 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { postToMesh } from "@/lib/mesh"
-import { listQueueFiles, readQueueEntry, deleteQueueFile, updateQueueEntry, calculateNextRetry, isPermanentFailure } from "@/lib/queue"
+import { listQueueFiles, readQueueEntry, deleteQueueFile, updateQueueEntry, calculateNextRetry, isPermanentFailure } from "@/lib/queue-worker"
 import { logInfo, logWarn, logError } from "@/lib/logging"
 
 const WORKER_INTERVAL = 30_000
 
 let isRunning = false
 let intervalId: NodeJS.Timeout | null = null
+let currentProcessingPromise: Promise<void> | null = null
 
 async function processQueue(): Promise<void> {
   if (isRunning) return
@@ -77,26 +78,32 @@ async function processQueue(): Promise<void> {
 export function startWorker(): void {
   if (intervalId) return
   logInfo("Starting waitlist queue worker")
-  intervalId = setInterval(processQueue, WORKER_INTERVAL)
-  processQueue()
+  intervalId = setInterval(() => {
+    currentProcessingPromise = processQueue()
+  }, WORKER_INTERVAL)
+  currentProcessingPromise = processQueue()
 }
 
-export function stopWorker(): void {
+export async function stopWorker(): Promise<void> {
   if (intervalId) {
     clearInterval(intervalId)
     intervalId = null
+    // Wait for any in-flight processing to complete
+    if (currentProcessingPromise) {
+      await currentProcessingPromise
+    }
     logInfo("Stopped waitlist queue worker")
   }
 }
 
 if (require.main === module) {
   startWorker()
-  process.on("SIGINT", () => {
-    stopWorker()
+  process.on("SIGINT", async () => {
+    await stopWorker()
     process.exit(0)
   })
-  process.on("SIGTERM", () => {
-    stopWorker()
+  process.on("SIGTERM", async () => {
+    await stopWorker()
     process.exit(0)
   })
 }

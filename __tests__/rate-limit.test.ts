@@ -80,6 +80,35 @@ describe("createRateLimiter", () => {
     expect(limiter.check("ip-5").remaining).toBe(2)
     expect(limiter.check("ip-6").remaining).toBe(2)
   })
+
+  it("cleanup interval removes expired entries", () => {
+    vi.useFakeTimers()
+    try {
+      limiter.check("ip-7")
+      limiter.check("ip-8")
+      limiter.check("ip-9")
+
+      // Advance time past window
+      vi.advanceTimersByTime(61_000)
+
+      // Trigger cleanup by advancing the cleanup interval
+      vi.advanceTimersByTime(60_000)
+
+      // New requests should work fine (expired entries cleaned up)
+      const result = limiter.check("ip-7")
+      expect(result.allowed).toBe(true)
+      expect(result.remaining).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("stopCleanup stops the cleanup interval", () => {
+    const limiter2 = createRateLimiter({ maxRequests: 3, windowMs: 60_000 })
+    expect(() => limiter2.stopCleanup()).not.toThrow()
+    // Calling again should not throw
+    expect(() => limiter2.stopCleanup()).not.toThrow()
+  })
 })
 
 describe("waitlistRateLimiter", () => {

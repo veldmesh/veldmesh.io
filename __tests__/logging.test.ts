@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest"
 
-process.env.QUEUE_ENCRYPTION_KEY = "test-passphrase-12345"
+process.env.QUEUE_ENCRYPTION_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
+process.env.QUEUE_DECRYPTION_KEY = "AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG"
 process.env.LOG_SALT = "test-salt"
 
 let logInfo: typeof import("@/lib/logging").logInfo

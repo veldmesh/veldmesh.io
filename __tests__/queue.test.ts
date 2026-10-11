@@ -1,30 +1,35 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
-import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest"
 
-process.env.QUEUE_ENCRYPTION_KEY = "test-passphrase-12345"
+// Test age key pair (generated for testing only)
+// Public key: age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h
+// Private key: AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG
+process.env.QUEUE_ENCRYPTION_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
+process.env.QUEUE_DECRYPTION_KEY = "AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG"
 process.env.LOG_SALT = "test-salt"
-process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue"
+process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-queue-test"
 
 let writeQueueEntry: typeof import("@/lib/queue").writeQueueEntry
-let readQueueEntry: typeof import("@/lib/queue").readQueueEntry
-let listQueueFiles: typeof import("@/lib/queue").listQueueFiles
-let deleteQueueFile: typeof import("@/lib/queue").deleteQueueFile
-let updateQueueEntry: typeof import("@/lib/queue").updateQueueEntry
-let calculateNextRetry: typeof import("@/lib/queue").calculateNextRetry
-let isPermanentFailure: typeof import("@/lib/queue").isPermanentFailure
+let readQueueEntry: typeof import("@/lib/queue-worker").readQueueEntry
+let listQueueFiles: typeof import("@/lib/queue-worker").listQueueFiles
+let deleteQueueFile: typeof import("@/lib/queue-worker").deleteQueueFile
+let updateQueueEntry: typeof import("@/lib/queue-worker").updateQueueEntry
+let calculateNextRetry: typeof import("@/lib/queue-worker").calculateNextRetry
+let isPermanentFailure: typeof import("@/lib/queue-worker").isPermanentFailure
 
 beforeAll(async () => {
-  const mod = await import("@/lib/queue")
-  writeQueueEntry = mod.writeQueueEntry
-  readQueueEntry = mod.readQueueEntry
-  listQueueFiles = mod.listQueueFiles
-  deleteQueueFile = mod.deleteQueueFile
-  updateQueueEntry = mod.updateQueueEntry
-  calculateNextRetry = mod.calculateNextRetry
-  isPermanentFailure = mod.isPermanentFailure
+  const queueMod = await import("@/lib/queue")
+  const queueWorkerMod = await import("@/lib/queue-worker")
+  writeQueueEntry = queueMod.writeQueueEntry
+  readQueueEntry = queueWorkerMod.readQueueEntry
+  listQueueFiles = queueWorkerMod.listQueueFiles
+  deleteQueueFile = queueWorkerMod.deleteQueueFile
+  updateQueueEntry = queueWorkerMod.updateQueueEntry
+  calculateNextRetry = queueWorkerMod.calculateNextRetry
+  isPermanentFailure = queueWorkerMod.isPermanentFailure
 })
 
-const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue"
+const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-queue-test"
 
 describe("queue", () => {
   beforeEach(async () => {

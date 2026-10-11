@@ -6,6 +6,27 @@ interface RateLimitEntry {
 
 const memoryStore = new Map<string, RateLimitEntry>()
 
+let cleanupInterval: NodeJS.Timeout | null = null
+
+function startCleanupInterval(windowMs: number): void {
+  if (cleanupInterval) return
+  cleanupInterval = setInterval(() => {
+    const now = Date.now()
+    for (const [key, entry] of memoryStore.entries()) {
+      if (now > entry.resetAt) {
+        memoryStore.delete(key)
+      }
+    }
+  }, windowMs)
+}
+
+function stopCleanupInterval(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval)
+    cleanupInterval = null
+  }
+}
+
 export interface RateLimitConfig {
   maxRequests: number
   windowMs: number
@@ -18,6 +39,8 @@ export interface RateLimitResult {
 }
 
 export function createRateLimiter(config: RateLimitConfig) {
+  startCleanupInterval(config.windowMs)
+
   return {
     check(identifier: string): RateLimitResult {
       const now = Date.now()
@@ -43,6 +66,10 @@ export function createRateLimiter(config: RateLimitConfig) {
 
     clear(): void {
       memoryStore.clear()
+    },
+
+    stopCleanup(): void {
+      stopCleanupInterval()
     },
   }
 }

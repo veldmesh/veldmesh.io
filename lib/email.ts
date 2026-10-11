@@ -25,5 +25,6 @@ export function validateEmail(email: string): { valid: boolean; error?: string }
 }
 
 export function normalizeEmail(email: string): string {
+  if (!email) return ""
   return email.trim().toLowerCase()
 }

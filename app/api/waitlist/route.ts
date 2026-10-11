@@ -4,12 +4,8 @@ import { validateEmail, normalizeEmail } from "@/lib/email"
 import { waitlistRateLimiter } from "@/lib/rate-limit"
 import { postToMesh } from "@/lib/mesh"
 import { writeQueueEntry } from "@/lib/queue"
-import { createConsentTextHash } from "@/lib/encryption"
+import { CONSENT_VERSION, CONSENT_TEXT_HASH, MAX_SOURCE_LENGTH } from "@/lib/encryption"
 import { logInfo, logWarn, logError } from "@/lib/logging"
-
-const CONSENT_VERSION = "1.0"
-const CONSENT_LABEL = "I agree to receive updates from Veldmesh and understand I can unsubscribe at any time."
-const CONSENT_TEXT_HASH = createConsentTextHash(CONSENT_LABEL)
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
@@ -31,7 +27,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const email = normalizeEmail(body.email as string)
-  const source = typeof body.source === "string" ? body.source : undefined
+  const source = typeof body.source === "string" ? body.source.slice(0, MAX_SOURCE_LENGTH) : undefined
   const consent = body.consent === true
 
   const utm_source = typeof body.utm_source === "string" ? body.utm_source : undefined
