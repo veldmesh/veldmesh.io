@@ -84,20 +84,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
 
       - name: Setup Node.js
         uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         with:
           node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: npm ci
 
       - name: Build Next.js standalone
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: npm run build
 
       - name: Verify standalone output
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           if [[ ! -d ".next/standalone" ]]; then
             echo "Error: .next/standalone not found. Ensure next.config.js has output: 'standalone'"
@@ -110,9 +115,11 @@ jobs:
           echo "Standalone build verified."
 
       - name: Install gettext-base for envsubst
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: sudo apt-get update && sudo apt-get install -y gettext-base
 
       - name: Configure SSH
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           mkdir -p ~/.ssh
           # Handle both base64-encoded and raw private keys
@@ -126,6 +133,7 @@ jobs:
 
       - name: Check if first deploy (config.toml exists)
         id: first_deploy
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           if ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "test -f /etc/vel/config.toml"; then
             echo "first_deploy=false" >> $GITHUB_OUTPUT
@@ -134,11 +142,12 @@ jobs:
           fi
 
       - name: Copy hardening script to VM
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden-vm.sh"
 
       - name: Run VM hardening (first deploy only)
-        if: steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true'
+        if: (steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true') && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true'))
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo -E bash -c '
@@ -153,6 +162,7 @@ jobs:
           "
 
       - name: Render and deploy config.toml from template
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Render template with secrets using envsubst for safe substitution
           export VM_MESH_IP="${{ secrets.VM_MESH_IP }}"
@@ -172,6 +182,7 @@ jobs:
           "
 
       - name: Render and deploy systemd units with deploy path
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Render veldsite.service with the deploy path
           export DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
@@ -186,6 +197,7 @@ jobs:
           "
 
       - name: Verify vel-daemon binary exists on VM
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             if [[ ! -x /usr/local/bin/vel-daemon ]]; then
@@ -197,6 +209,7 @@ jobs:
           "
 
       - name: Deploy Next.js app via rsync
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           rsync -avz --delete \
             -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
@@ -217,6 +230,7 @@ jobs:
             "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/.next/static/"
 
       - name: Enable and start services
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo systemctl enable --now veld-daemon veldsite
@@ -225,6 +239,7 @@ jobs:
           "
 
       - name: Wait for services to be ready
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Poll for services to become active (max 60 seconds)
           for i in {1..30}; do
@@ -241,6 +256,7 @@ jobs:
           done
 
       - name: Verify hardening (run --check)
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo -E bash -c '
@@ -255,6 +271,7 @@ jobs:
           "
 
       - name: Verify deployment
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           # Check health endpoint or landing page
           DOMAIN="${{ secrets.DEPLOY_DOMAIN }}"
@@ -292,12 +309,14 @@ jobs:
           done
 
       - name: Verify veld daemon peer connection
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo journalctl -u vel-daemon --no-pager -n 50 | grep -i 'peer.*connected\|connected.*peer' && echo '✓ Veld daemon shows peer connected' || echo '⚠ Veld daemon peer connection not yet visible in logs'
           "
 
       - name: Verify systemd user contexts
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.label-check.outputs.deploy_opt_in == 'true')
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             echo 'velsite user:' \$(systemctl show -p User --value veldsite)
