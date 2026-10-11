@@ -30,9 +30,5 @@ ProtectControlGroups=true
 StandardInput=null
 ReadWritePaths=/etc/vel
 
-# Capabilities for mesh networking (if needed)
-# CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
-# AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-
 [Install]
 WantedBy=multi-user.target

@@ -11,6 +11,7 @@ set -euo pipefail
 #   IRONSERVER_PUBLIC_ENDPOINT - Ironserver's public endpoint
 #   WAITLIST_BEARER_TOKEN - Bearer token for waitlist POST
 #   RELAY_IDENTITY_KEY_B64 (optional) - Base64-encoded relay identity key
+#   VM_DEPLOY_PATH (optional) - Deploy path for velsite (default: /opt/veldsite/app)
 #
 # Optional environment variables:
 #   DEPLOY_USER - SSH deploy user (default: ubuntu)
@@ -22,7 +23,7 @@ fi
 
 DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-ubuntu}}"
 VM_MESH_PORT="${VM_MESH_PORT:-51820}"
-VELDSITE_PATH="/opt/veldsite"
+VELDSITE_PATH="${VM_DEPLOY_PATH:-/opt/veldsite/app}"
 VEL_CONFIG_PATH="/etc/vel/config.toml"
 ENV_FILE="${VELDSITE_PATH}/.env"
 RELAY_KEY_PATH="/etc/velmesh/relay-identity.key"
@@ -185,7 +186,8 @@ check_users() {
   if [[ ! -d "$VELDSITE_PATH" ]]; then
     issues+=("Directory $VELDSITE_PATH missing")
   else
-    local owner=$(stat -c '%U' "$VELDSITE_PATH")
+    local owner
+    owner=$(stat -c '%U' "$VELDSITE_PATH")
     if [[ "$owner" != "velsite" ]]; then
       issues+=("$VELDSITE_PATH not owned by velsite (current: $owner)")
     fi
@@ -214,8 +216,10 @@ check_env_file() {
   if [[ ! -f "$ENV_FILE" ]]; then
     issues+=("Environment file $ENV_FILE missing")
   else
-    local perms=$(stat -c '%a' "$ENV_FILE")
-    local owner=$(stat -c '%U' "$ENV_FILE")
+    local perms
+    perms=$(stat -c '%a' "$ENV_FILE")
+    local owner
+    owner=$(stat -c '%U' "$ENV_FILE")
     if [[ "$perms" != "600" ]]; then
       issues+=("$ENV_FILE permissions are $perms, expected 600")
     fi
@@ -258,9 +262,21 @@ check_vel_config() {
   if [[ ! -f "$VEL_CONFIG_PATH" ]]; then
     issues+=("Veld config $VEL_CONFIG_PATH missing")
   else
-    local perms=$(stat -c '%a' "$VEL_CONFIG_PATH")
+    local perms
+    perms=$(stat -c '%a' "$VEL_CONFIG_PATH")
     if [[ "$perms" != "600" ]]; then
       issues+=("$VEL_CONFIG_PATH permissions are $perms, expected 600")
+    fi
+  fi
+
+  # Check /etc/vel directory exists with correct ownership
+  if [[ ! -d "/etc/vel" ]]; then
+    issues+=("/etc/vel directory missing")
+  else
+    local owner
+    owner=$(stat -c '%U' "/etc/vel")
+    if [[ "$owner" != "vel" ]]; then
+      issues+=("/etc/vel not owned by vel (current: $owner)")
     fi
   fi
 
@@ -271,6 +287,10 @@ check_vel_config() {
       done
       return 1
     fi
+    log "Creating /etc/vel directory and deploying config.toml..."
+    mkdir -p /etc/vel
+    chown vel:vel /etc/vel
+    chmod 750 /etc/vel
   fi
   return 0
 }
@@ -282,8 +302,10 @@ check_relay_key() {
     if [[ ! -f "$RELAY_KEY_PATH" ]]; then
       issues+=("Relay identity key $RELAY_KEY_PATH missing but RELAY_IDENTITY_KEY_B64 is set")
     else
-      local perms=$(stat -c '%a' "$RELAY_KEY_PATH")
-      local owner=$(stat -c '%U' "$RELAY_KEY_PATH")
+      local perms
+      perms=$(stat -c '%a' "$RELAY_KEY_PATH")
+      local owner
+      owner=$(stat -c '%U' "$RELAY_KEY_PATH")
       if [[ "$perms" != "600" ]]; then
         issues+=("$RELAY_KEY_PATH permissions are $perms, expected 600")
       fi
@@ -329,7 +351,8 @@ check_systemd_units() {
       expected_user="vel"
     fi
     if [[ -n "$expected_user" ]]; then
-      local actual_user=$(systemctl show -p User --value "$unit" 2>/dev/null || echo "")
+      local actual_user
+      actual_user=$(systemctl show -p User --value "$unit" 2>/dev/null || echo "")
       if [[ "$actual_user" != "$expected_user" ]]; then
         issues+=("Service $unit runs as user '$actual_user', expected '$expected_user'")
       fi

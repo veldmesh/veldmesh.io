@@ -126,21 +126,13 @@ jobs:
             echo "first_deploy=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Ensure deploy directory exists with correct permissions (first deploy)
-        if: steps.first_deploy.outputs.first_deploy == 'true'
-        run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo mkdir -p ${{ secrets.VM_DEPLOY_PATH }}
-            sudo chown velsite:velsite ${{ secrets.VM_DEPLOY_PATH }}
-            sudo chmod 750 ${{ secrets.VM_DEPLOY_PATH }}
-          "
-
       - name: Run VM hardening (first deploy only)
         if: steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true'
         run: |
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden-vm.sh"
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo VM_MESH_PORT=${{ secrets.VM_MESH_PORT }} \
+            VM_DEPLOY_PATH=${{ secrets.VM_DEPLOY_PATH }} \
             IRONSERVER_MESH_IP=${{ secrets.IRONSERVER_MESH_IP }} \
             IRONSERVER_PUBLIC_ENDPOINT=${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }} \
             WAITLIST_BEARER_TOKEN=${{ secrets.WAITLIST_BEARER_TOKEN }} \
@@ -152,11 +144,23 @@ jobs:
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo VM_MESH_PORT=${{ secrets.VM_MESH_PORT }} \
+            VM_DEPLOY_PATH=${{ secrets.VM_DEPLOY_PATH }} \
             IRONSERVER_MESH_IP=${{ secrets.IRONSERVER_MESH_IP }} \
             IRONSERVER_PUBLIC_ENDPOINT=${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }} \
             WAITLIST_BEARER_TOKEN=${{ secrets.WAITLIST_BEARER_TOKEN }} \
             RELAY_IDENTITY_KEY_B64=${{ secrets.RELAY_IDENTITY_KEY_B64 }} \
             bash /tmp/harden-vm.sh --check
+          "
+
+      - name: Verify vel-daemon binary exists on VM
+        run: |
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            if [[ ! -x /usr/local/bin/vel-daemon ]]; then
+              echo 'Error: /usr/local/bin/vel-daemon not found or not executable'
+              echo 'The vel-daemon binary must be pre-installed on the VM before deployment.'
+              exit 1
+            fi
+            echo '✓ vel-daemon binary found at /usr/local/bin/vel-daemon'
           "
 
       - name: Render and deploy config.toml from template
@@ -194,20 +198,24 @@ jobs:
             .next/static/ \
             "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/.next/static/"
 
-      - name: Deploy systemd units
+      - name: Render and deploy systemd units with deploy path
         run: |
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/veldsite.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/veldsite.service"
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/vel-daemon.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/vel-daemon.service"
+          # Render veldsite.service with the deploy path
+          export DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
+          envsubst < deploy/veldsite.service.tmpl > /tmp/veldsite.service
+          envsubst < deploy/vel-daemon.service > /tmp/vel-daemon.service
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/veldsite.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/veldsite.service"
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/vel-daemon.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/vel-daemon.service"
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
             sudo mv /tmp/veldsite.service /etc/systemd/system/veldsite.service
             sudo mv /tmp/vel-daemon.service /etc/systemd/system/vel-daemon.service
             sudo systemctl daemon-reload
           "
 
-      - name: Restart services
+      - name: Enable and start services
         run: |
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo systemctl restart veld-daemon veldsite
+            sudo systemctl enable --now veld-daemon veldsite
             sudo systemctl status veld-daemon --no-pager
             sudo systemctl status veldsite --no-pager
           "
