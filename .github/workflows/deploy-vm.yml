@@ -105,6 +105,9 @@ jobs:
           fi
           echo "Standalone build verified."
 
+      - name: Install gettext-base for envsubst
+        run: sudo apt-get update && sudo apt-get install -y gettext-base
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -126,41 +129,23 @@ jobs:
             echo "first_deploy=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Copy hardening script to VM
+        run: |
+          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden-vm.sh"
+
       - name: Run VM hardening (first deploy only)
         if: steps.first_deploy.outputs.first_deploy == 'true' && github.event.inputs.skip_harden != 'true'
         run: |
-          scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} deploy/harden-vm.sh "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/harden-vm.sh"
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo VM_MESH_PORT=${{ secrets.VM_MESH_PORT }} \
-            VM_DEPLOY_PATH=${{ secrets.VM_DEPLOY_PATH }} \
-            IRONSERVER_MESH_IP=${{ secrets.IRONSERVER_MESH_IP }} \
-            IRONSERVER_PUBLIC_ENDPOINT=${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }} \
-            WAITLIST_BEARER_TOKEN=${{ secrets.WAITLIST_BEARER_TOKEN }} \
-            RELAY_IDENTITY_KEY_B64=${{ secrets.RELAY_IDENTITY_KEY_B64 }} \
-            bash /tmp/harden-vm.sh
-          "
-
-      - name: Verify hardening (run --check)
-        run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            sudo VM_MESH_PORT=${{ secrets.VM_MESH_PORT }} \
-            VM_DEPLOY_PATH=${{ secrets.VM_DEPLOY_PATH }} \
-            IRONSERVER_MESH_IP=${{ secrets.IRONSERVER_MESH_IP }} \
-            IRONSERVER_PUBLIC_ENDPOINT=${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }} \
-            WAITLIST_BEARER_TOKEN=${{ secrets.WAITLIST_BEARER_TOKEN }} \
-            RELAY_IDENTITY_KEY_B64=${{ secrets.RELAY_IDENTITY_KEY_B64 }} \
-            bash /tmp/harden-vm.sh --check
-          "
-
-      - name: Verify vel-daemon binary exists on VM
-        run: |
-          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
-            if [[ ! -x /usr/local/bin/vel-daemon ]]; then
-              echo 'Error: /usr/local/bin/vel-daemon not found or not executable'
-              echo 'The vel-daemon binary must be pre-installed on the VM before deployment.'
-              exit 1
-            fi
-            echo '✓ vel-daemon binary found at /usr/local/bin/vel-daemon'
+            sudo -E bash -c '
+              export VM_MESH_PORT="${{ secrets.VM_MESH_PORT }}"
+              export VM_DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
+              export IRONSERVER_MESH_IP="${{ secrets.IRONSERVER_MESH_IP }}"
+              export IRONSERVER_PUBLIC_ENDPOINT="${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}"
+              export WAITLIST_BEARER_TOKEN="${{ secrets.WAITLIST_BEARER_TOKEN }}"
+              export RELAY_IDENTITY_KEY_B64="${{ secrets.RELAY_IDENTITY_KEY_B64 }}"
+              /tmp/harden-vm.sh
+            '
           "
 
       - name: Render and deploy config.toml from template
@@ -176,34 +161,18 @@ jobs:
           # Copy to VM
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/config.toml "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/config.toml"
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo mkdir -p /etc/vel
             sudo mv /tmp/config.toml /etc/vel/config.toml
             sudo chown vel:vel /etc/vel/config.toml
             sudo chmod 600 /etc/vel/config.toml
           "
-
-      - name: Deploy Next.js app via rsync
-        run: |
-          rsync -avz --delete \
-            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
-            .next/standalone/ \
-            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/"
-
-          rsync -avz --delete \
-            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
-            public/ \
-            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/public/"
-
-          rsync -avz --delete \
-            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
-            .next/static/ \
-            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/.next/static/"
 
       - name: Render and deploy systemd units with deploy path
         run: |
           # Render veldsite.service with the deploy path
           export DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
           envsubst < deploy/veldsite.service.tmpl > /tmp/veldsite.service
-          envsubst < deploy/vel-daemon.service > /tmp/vel-daemon.service
+          cp deploy/vel-daemon.service /tmp/vel-daemon.service
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/veldsite.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/veldsite.service"
           scp -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} /tmp/vel-daemon.service "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:/tmp/vel-daemon.service"
           ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
@@ -211,6 +180,37 @@ jobs:
             sudo mv /tmp/vel-daemon.service /etc/systemd/system/vel-daemon.service
             sudo systemctl daemon-reload
           "
+
+      - name: Verify vel-daemon binary exists on VM
+        run: |
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            if [[ ! -x /usr/local/bin/vel-daemon ]]; then
+              echo 'Error: /usr/local/bin/vel-daemon not found or not executable'
+              echo 'The vel-daemon binary must be pre-installed on the VM before deployment.'
+              exit 1
+            fi
+            echo '✓ vel-daemon binary found at /usr/local/bin/vel-daemon'
+          "
+
+      - name: Deploy Next.js app via rsync
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
+            --rsync-path="sudo rsync" \
+            .next/standalone/ \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/"
+
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
+            --rsync-path="sudo rsync" \
+            public/ \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/public/"
+
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }}" \
+            --rsync-path="sudo rsync" \
+            .next/static/ \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}:${{ secrets.VM_DEPLOY_PATH }}/.next/static/"
 
       - name: Enable and start services
         run: |
@@ -235,6 +235,20 @@ jobs:
             fi
             sleep 2
           done
+
+      - name: Verify hardening (run --check)
+        run: |
+          ssh -i ~/.ssh/vm_key ${{ env.SSH_OPTS }} "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_SSH_HOST }}" "
+            sudo -E bash -c '
+              export VM_MESH_PORT="${{ secrets.VM_MESH_PORT }}"
+              export VM_DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
+              export IRONSERVER_MESH_IP="${{ secrets.IRONSERVER_MESH_IP }}"
+              export IRONSERVER_PUBLIC_ENDPOINT="${{ secrets.IRONSERVER_PUBLIC_ENDPOINT }}"
+              export WAITLIST_BEARER_TOKEN="${{ secrets.WAITLIST_BEARER_TOKEN }}"
+              export RELAY_IDENTITY_KEY_B64="${{ secrets.RELAY_IDENTITY_KEY_B64 }}"
+              /tmp/harden-vm.sh --check
+            '
+          "
 
       - name: Verify deployment
         run: |

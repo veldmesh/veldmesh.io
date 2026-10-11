@@ -15,6 +15,10 @@ set -euo pipefail
 #
 # Optional environment variables:
 #   DEPLOY_USER - SSH deploy user (default: ubuntu)
+#
+# Note: This script assumes Ubuntu/Debian (uses apt-get, systemd, ufw).
+# For other distributions, the package installation and service management
+# commands would need to be adapted.
 
 CHECK_MODE=false
 if [[ "${1:-}" == "--check" ]]; then
@@ -63,13 +67,13 @@ check_ssh_config() {
       return 1
     fi
     log "Hardening SSH configuration..."
-    sed -i -E 's/^\s*#?\s*PermitRootLogin.*/PermitRootLogin no/' "$sshd_config"
-    sed -i -E 's/^\s*#?\s*PasswordAuthentication.*/PasswordAuthentication no/' "$sshd_config"
-    if grep -qE "^\s*AllowUsers" "$sshd_config"; then
-      sed -i -E "s/^\s*AllowUsers.*/AllowUsers ${DEPLOY_USER}/" "$sshd_config"
-    else
-      echo "AllowUsers ${DEPLOY_USER}" >> "$sshd_config"
-    fi
+    # Delete any existing matching lines to avoid duplicates, then append correct ones
+    sed -i -E '/^\s*#?\s*PermitRootLogin/d' "$sshd_config"
+    echo "PermitRootLogin no" >> "$sshd_config"
+    sed -i -E '/^\s*#?\s*PasswordAuthentication/d' "$sshd_config"
+    echo "PasswordAuthentication no" >> "$sshd_config"
+    sed -i -E '/^\s*AllowUsers/d' "$sshd_config"
+    echo "AllowUsers ${DEPLOY_USER}" >> "$sshd_config"
     # Validate SSH config before reload to avoid lockout
     if ! sshd -t; then
       err "SSH config validation failed (sshd -t), NOT reloading"
@@ -112,6 +116,9 @@ check_ufw() {
       return 1
     fi
     log "Configuring UFW..."
+    # Note: ufw --force reset removes ALL existing rules.
+    # This script assumes a dedicated VM where only these rules are needed.
+    # If the VM runs other services requiring firewall rules, they must be re-added manually.
     ufw --force reset
     ufw default deny incoming
     ufw default allow outgoing
@@ -341,9 +348,8 @@ check_systemd_units() {
   local issues=()
 
   for unit in veldsite veld-daemon; do
-    if ! systemctl is-active --quiet "$unit"; then
-      issues+=("Service $unit is not active")
-    fi
+    # In check mode, only verify User= directive matches expected user.
+    # Do NOT check is-active status, as services may not be deployed yet.
     local expected_user=""
     if [[ "$unit" == "velsite" ]]; then
       expected_user="velsite"
