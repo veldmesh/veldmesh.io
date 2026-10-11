@@ -4,6 +4,7 @@
 import { useState, FormEvent, ChangeEvent } from "react"
 import Link from "next/link"
 import { ShieldCheck, DollarSign, Code2, Mail, Loader2, CheckCircle, AlertCircle } from "lucide-react"
+import { CONSENT_LABEL } from "@/lib/constants"
 
 const features = [
   {
@@ -22,8 +23,6 @@ const features = [
     body: "MIT-licensed daemon and protocol. Audit the crypto. Self-host the coord server under BSL.",
   },
 ]
-
-const CONSENT_LABEL = "I agree to receive updates from Veldmesh and understand I can unsubscribe at any time."
 
 type FormStatus = "idle" | "submitting" | "success" | "error"
 

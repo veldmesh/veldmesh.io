@@ -40,6 +40,7 @@ async function processQueue(): Promise<void> {
       }
 
       const meshPayload = {
+        idempotency_key: entry.idempotency_key,
         email: entry.email,
         source: entry.source,
         consent_at: entry.consent_at,
@@ -92,6 +93,9 @@ export async function stopWorker(): Promise<void> {
     if (currentProcessingPromise) {
       await currentProcessingPromise
     }
+    // Stop the rate limiter cleanup interval
+    const { waitlistRateLimiter } = await import("@/lib/rate-limit")
+    waitlistRateLimiter.stopCleanup()
     logInfo("Stopped waitlist queue worker")
   }
 }

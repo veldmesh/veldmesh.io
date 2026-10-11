@@ -6,6 +6,7 @@ import { postToMesh } from "@/lib/mesh"
 import { writeQueueEntry } from "@/lib/queue"
 import { CONSENT_VERSION, CONSENT_TEXT_HASH, MAX_SOURCE_LENGTH } from "@/lib/encryption"
 import { logInfo, logWarn, logError } from "@/lib/logging"
+import { randomUUID } from "crypto"
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
@@ -50,8 +51,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const consent_at = new Date().toISOString()
+  const idempotency_key = randomUUID()
 
   const meshPayload = {
+    idempotency_key,
     email,
     source,
     consent_at,
@@ -73,11 +76,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    await writeQueueEntry(meshPayload)
+    await writeQueueEntry({ ...meshPayload, ip: clientIp })
     logInfo("Waitlist signup queued for retry", email, consent_at)
     return NextResponse.json({ success: true, queued: true }, { status: 202 })
   } catch (err) {
-    logError("Failed to queue waitlist signup", email, consent_at, "QUEUE_WRITE_FAILED", { error: err instanceof Error ? err.message : "Unknown error" })
+    const errorMessage = err instanceof Error ? err.message : "Unknown error"
+    if (errorMessage.startsWith("QUEUE_FULL")) {
+      logError("Queue full, rejecting waitlist signup", email, consent_at, "QUEUE_FULL", { error: errorMessage })
+      return NextResponse.json({ error: "Service temporarily unavailable. Please try again later." }, { status: 503 })
+    }
+    logError("Failed to queue waitlist signup", email, consent_at, "QUEUE_WRITE_FAILED", { error: errorMessage })
     return NextResponse.json({ error: "Failed to process signup. Please try again later." }, { status: 500 })
   }
 }

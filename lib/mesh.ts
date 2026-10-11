@@ -18,6 +18,7 @@ function getBearerToken(): string {
 }
 
 export interface MeshWaitlistPayload {
+  idempotency_key: string
   email: string
   source?: string
   consent_at: string

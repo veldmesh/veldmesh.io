@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 // Worker-only queue operations - not imported by API routes to avoid Turbopack filesystem tracing
-import { readFile, readdir, unlink, writeFile } from "fs/promises"
+import { readFile, readdir, unlink, writeFile, stat } from "fs/promises"
 import { join } from "path"
 import { decryptQueueEntry, encryptQueueEntry } from "./encryption"
 import { QueuedSubmission, ensureQueueDir, QUEUE_DIR } from "./queue"
@@ -48,4 +48,21 @@ export function isPermanentFailure(entry: QueuedSubmission): boolean {
   const queuedAt = new Date(entry.queued_at).getTime()
   const now = Date.now()
   return now - queuedAt > 24 * 60 * 60 * 1000
+}
+
+export async function getQueueStats(): Promise<{ fileCount: number; totalSize: number }> {
+  try {
+    const files = await readdir(QUEUE_DIR)
+    let totalSize = 0
+    for (const file of files) {
+      if (file.endsWith(".json.age")) {
+        const filepath = join(QUEUE_DIR, file)
+        const stats = await stat(filepath)
+        totalSize += stats.size
+      }
+    }
+    return { fileCount: files.filter((f) => f.endsWith(".json.age")).length, totalSize }
+  } catch {
+    return { fileCount: 0, totalSize: 0 }
+  }
 }

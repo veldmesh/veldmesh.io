@@ -53,7 +53,6 @@ describe("queue", () => {
     utm_term: "test",
     utm_content: "banner",
     referrer: "https://example.com",
-    ip_hash: "hash123",
   }
 
   it("writes and reads queue entries with encryption", async () => {
@@ -72,6 +71,7 @@ describe("queue", () => {
     expect(entry!.queued_at).toBeDefined()
     expect(entry!.retry_count).toBe(0)
     expect(entry!.next_retry_at).toBeDefined()
+    expect(entry!.idempotency_key).toBeDefined()
   })
 
   it("queue file is not valid JSON (encrypted)", async () => {
@@ -114,6 +114,7 @@ describe("queue", () => {
   it("updates queue entries", async () => {
     const filepath = await writeQueueEntry(sampleEntry)
     const entry = await readQueueEntry(filepath)
+    expect(entry).not.toBeNull()
     expect(entry!.retry_count).toBe(0)
 
     entry!.retry_count = 2
@@ -138,7 +139,18 @@ describe("queue", () => {
 
   it("isPermanentFailure returns true after 24h", () => {
     const oldEntry = {
-      ...sampleEntry,
+      idempotency_key: "test-key-1",
+      email: "test@example.com",
+      source: "test-source",
+      consent_at: "2026-01-01T00:00:00.000Z",
+      consent_version: "1.0",
+      consent_text_hash: "abc123",
+      utm_source: "google",
+      utm_medium: "cpc",
+      utm_campaign: "launch",
+      utm_term: "test",
+      utm_content: "banner",
+      referrer: "https://example.com",
       queued_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
       retry_count: 5,
       next_retry_at: new Date().toISOString(),
@@ -146,7 +158,18 @@ describe("queue", () => {
     expect(isPermanentFailure(oldEntry)).toBe(true)
 
     const newEntry = {
-      ...sampleEntry,
+      idempotency_key: "test-key-2",
+      email: "test@example.com",
+      source: "test-source",
+      consent_at: "2026-01-01T00:00:00.000Z",
+      consent_version: "1.0",
+      consent_text_hash: "abc123",
+      utm_source: "google",
+      utm_medium: "cpc",
+      utm_campaign: "launch",
+      utm_term: "test",
+      utm_content: "banner",
+      referrer: "https://example.com",
       queued_at: new Date().toISOString(),
       retry_count: 5,
       next_retry_at: new Date().toISOString(),
