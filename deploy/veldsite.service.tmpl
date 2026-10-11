@@ -20,12 +20,21 @@ SyslogIdentifier=veldsite
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
 StandardInput=null
+
+# Allow reading/writing to deploy directory for Next.js cache/ISR
 ReadWritePaths=${DEPLOY_PATH}
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target

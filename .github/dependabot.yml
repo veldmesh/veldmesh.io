@@ -1,45 +1,50 @@
-# Dependabot configuration for weekly GitHub Actions SHA updates
-# This ensures all actions in workflows are pinned to commit SHAs and updated weekly
-
 version: 2
 updates:
-  # Update GitHub Actions in .github/workflows/
+  # GitHub Actions - weekly SHA pin updates
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "09:00"
+      time: "04:00"
       timezone: "UTC"
-    # Only update commit SHAs, not version tags
+    labels:
+      - "dependencies"
+      - "github-actions"
     commit-message:
-      prefix: "ci:"
-      include: "scope"
-    # Group updates for easier review
-    groups:
-      github-actions:
-        patterns:
-          - "*"
-    # Allow updates to commit SHAs only
-    allow:
-      - dependency-type: "direct"
-      - dependency-type: "indirect"
+      prefix: "chore(deps):"
 
-  # Also update npm dependencies weekly
+  # npm dependencies - weekly updates
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "09:00"
+      time: "04:00"
       timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "npm"
     commit-message:
-      prefix: "deps:"
-      include: "scope"
+      prefix: "chore(deps):"
     groups:
-      npm-dependencies:
+      devDependencies:
+        patterns:
+          - "@types/*"
+          - "vitest"
+          - "typescript"
+          - "tsx"
+        update-types:
+          - "minor"
+          - "patch"
+      production:
         patterns:
           - "*"
-    allow:
-      - dependency-type: "direct"
-      - dependency-type: "indirect"
+        update-types:
+          - "minor"
+          - "patch"
+        exclude-patterns:
+          - "@types/*"
+          - "vitest"
+          - "typescript"
+          - "tsx"

@@ -7,12 +7,7 @@ Wants=network.target
 Type=simple
 User=vel
 Group=vel
-# NOTE: The vel-daemon binary must be pre-installed at /usr/local/bin/vel-daemon
-# on the VM before running this workflow. This can be done via:
-#   - Pre-baked VM image with vel-daemon installed
-#   - Configuration management (ansible, chef, puppet)
-#   - Manual installation before first deploy
-ExecStart=/usr/local/bin/vel-daemon --config /etc/vel/config.toml
+ExecStart=/usr/local/bin/vel-daemon
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -23,12 +18,28 @@ SyslogIdentifier=vel-daemon
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
 StandardInput=null
+
+# Network capabilities for mesh (WireGuard)
+# CAP_NET_ADMIN required for WireGuard interface management
+# CAP_NET_RAW required for raw socket operations
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+# Allow access to config directory
 ReadWritePaths=/etc/vel
+ReadWritePaths=/etc/velmesh
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target
