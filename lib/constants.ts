@@ -6,8 +6,8 @@ export const MAX_SOURCE_LENGTH = 200
 // Hidden anti-bot field. The form renders it hidden; humans never fill it.
 export const HONEYPOT_FIELD = "company_website"
 
-// Mission Control requires every signup to carry a `source`. When the form
-// does not provide one (e.g. a direct API call), the route falls back to
-// this default. Forms on known pages send their own page name instead
+// Every signup must carry a `source`. When the form does not provide one
+// (e.g. a direct API call), the route falls back to this default.
+// Forms on known pages send their own page name instead
 // ("home", "features", "docs", "waitlist").
 export const DEFAULT_SOURCE = "website"

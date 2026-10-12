@@ -1,9 +1,18 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest"
+import { generateIdentity, identityToRecipient } from "age-encryption"
 
-process.env.QUEUE_ENCRYPTION_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
-process.env.QUEUE_DECRYPTION_KEY = "AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG"
-process.env.LOG_SALT = "test-salt"
+// Generate a fresh age key pair for each test run — no secrets committed.
+let TEST_PUBLIC_KEY: string
+
+beforeAll(async () => {
+  const privateKey = await generateIdentity()
+  const publicKey = await identityToRecipient(privateKey)
+  TEST_PUBLIC_KEY = publicKey
+
+  process.env.QUEUE_ENCRYPTION_KEY = TEST_PUBLIC_KEY
+  process.env.LOG_SALT = "test-salt"
+})
 
 let logInfo: typeof import("@/lib/logging").logInfo
 let logWarn: typeof import("@/lib/logging").logWarn

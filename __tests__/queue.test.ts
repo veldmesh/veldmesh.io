@@ -1,18 +1,24 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest"
+import { Decrypter, generateIdentity, identityToRecipient } from "age-encryption"
 
-// Test age key pair (generated for testing only). The web server only ever
-// sees the public key; the private key stands in for the one held by the
-// operator's server, which is what decrypts queued entries in production.
-const TEST_PUBLIC_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
-const TEST_PRIVATE_KEY = "AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG"
+// Generate a fresh age key pair for each test run — no secrets committed.
+let TEST_PUBLIC_KEY: string
+let TEST_PRIVATE_KEY: string
 
-process.env.QUEUE_ENCRYPTION_KEY = TEST_PUBLIC_KEY
-process.env.LOG_SALT = "test-salt"
-process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-queue-test"
-process.env.MAX_QUEUE_FILES = "5"
+beforeAll(async () => {
+  const privateKey = await generateIdentity()
+  const publicKey = await identityToRecipient(privateKey)
+  TEST_PUBLIC_KEY = publicKey
+  TEST_PRIVATE_KEY = privateKey
 
-const TEST_QUEUE_DIR = process.env.WAITLIST_QUEUE_DIR
+  process.env.QUEUE_ENCRYPTION_KEY = TEST_PUBLIC_KEY
+  process.env.LOG_SALT = "test-salt"
+  process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-queue-test"
+  process.env.MAX_QUEUE_FILES = "5"
+})
+
+const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-queue-test"
 
 let writeQueueEntry: typeof import("@/lib/queue").writeQueueEntry
 let readQueueEnvelope: typeof import("@/lib/queue-worker").readQueueEnvelope
@@ -38,7 +44,6 @@ beforeAll(async () => {
 })
 
 async function decryptForTest(ciphertext: string): Promise<Record<string, unknown>> {
-  const { Decrypter } = await import("age-encryption")
   const decrypter = new Decrypter()
   decrypter.addIdentity(TEST_PRIVATE_KEY)
   const plaintext = await decrypter.decrypt(new Uint8Array(Buffer.from(ciphertext, "base64")), "text")

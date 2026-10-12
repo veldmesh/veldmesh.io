@@ -1,19 +1,26 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest"
 import { NextRequest } from "next/server"
+import { Decrypter, generateIdentity, identityToRecipient } from "age-encryption"
 
-// Test age key pair (generated for testing only). The private key stands in
-// for the one held by the operator's server.
-const TEST_PUBLIC_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
-const TEST_PRIVATE_KEY = "AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG"
+// Generate a fresh age key pair for each test run — no secrets committed.
+let TEST_PUBLIC_KEY: string
+let TEST_PRIVATE_KEY: string
 
-process.env.QUEUE_ENCRYPTION_KEY = TEST_PUBLIC_KEY
-process.env.LOG_SALT = "test-salt"
-process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-api-test"
-process.env.IRONSERVER_MESH_ADDR = "https://mesh.example.com"
-process.env.WAITLIST_BEARER_TOKEN = "test-token"
+beforeAll(async () => {
+  const privateKey = await generateIdentity()
+  const publicKey = await identityToRecipient(privateKey)
+  TEST_PUBLIC_KEY = publicKey
+  TEST_PRIVATE_KEY = privateKey
 
-const TEST_QUEUE_DIR = process.env.WAITLIST_QUEUE_DIR
+  process.env.QUEUE_ENCRYPTION_KEY = TEST_PUBLIC_KEY
+  process.env.LOG_SALT = "test-salt"
+  process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-api-test"
+  process.env.WAITLIST_FORWARD_URL = "https://example.com/api/waitlist"
+  process.env.WAITLIST_BEARER_TOKEN = "test-token"
+})
+
+const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-api-test"
 
 let POST: typeof import("@/app/api/waitlist/route").POST
 let waitlistRateLimiter: typeof import("@/lib/rate-limit").waitlistRateLimiter
@@ -29,7 +36,6 @@ beforeAll(async () => {
 })
 
 async function decryptForTest(ciphertext: string): Promise<Record<string, unknown>> {
-  const { Decrypter } = await import("age-encryption")
   const decrypter = new Decrypter()
   decrypter.addIdentity(TEST_PRIVATE_KEY)
   const plaintext = await decrypter.decrypt(new Uint8Array(Buffer.from(ciphertext, "base64")), "text")
@@ -113,7 +119,7 @@ describe("API /api/waitlist", () => {
       const res = await POST(createRequest({ email: "user@example.com", consent: true }))
       expect(res.status).toBe(201)
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://mesh.example.com/api/waitlist",
+        "https://example.com/api/waitlist/api/waitlist",
         expect.objectContaining({
           body: expect.stringContaining('"source":"website"'),
         })
@@ -126,7 +132,7 @@ describe("API /api/waitlist", () => {
         const res = await POST(createRequest({ email: "user@example.com", consent: true, source: pageSource }))
         expect(res.status).toBe(201)
         expect(global.fetch).toHaveBeenLastCalledWith(
-          "https://mesh.example.com/api/waitlist",
+          "https://example.com/api/waitlist/api/waitlist",
           expect.objectContaining({
             body: expect.stringContaining(`"source":"${pageSource}"`),
           })
@@ -139,7 +145,7 @@ describe("API /api/waitlist", () => {
       const res = await POST(createRequest({ email: "user@example.com", consent: true, source: "Hacker News" }))
       expect(res.status).toBe(201)
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://mesh.example.com/api/waitlist",
+        "https://example.com/api/waitlist/api/waitlist",
         expect.objectContaining({
           body: expect.stringContaining('"source":"Hacker News"'),
         })
@@ -150,7 +156,7 @@ describe("API /api/waitlist", () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 })
       await POST(createRequest({ email: "user@example.com", consent: true, source: "   " }))
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://mesh.example.com/api/waitlist",
+        "https://example.com/api/waitlist/api/waitlist",
         expect.objectContaining({
           body: expect.stringContaining('"source":"website"'),
         })

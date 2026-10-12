@@ -30,18 +30,18 @@ export interface MeshResult {
 }
 
 function getMeshAddr(): string {
-  const addr = process.env.IRONSERVER_MESH_ADDR
+  const addr = process.env.WAITLIST_FORWARD_URL
   if (!addr) {
-    throw new Error("IRONSERVER_MESH_ADDR environment variable is required")
+    throw new Error("WAITLIST_FORWARD_URL environment variable is required")
   }
   let parsed: URL
   try {
     parsed = new URL(addr)
   } catch {
-    throw new Error("IRONSERVER_MESH_ADDR must be a valid URL (e.g. https://host)")
+    throw new Error("WAITLIST_FORWARD_URL must be a valid URL (e.g. https://host)")
   }
   if (parsed.protocol !== "https:" && process.env.NODE_ENV === "production") {
-    throw new Error("IRONSERVER_MESH_ADDR must use https in production")
+    throw new Error("WAITLIST_FORWARD_URL must use https in production")
   }
   return addr.replace(/\/+$/, "")
 }

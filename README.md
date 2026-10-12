@@ -60,8 +60,8 @@ docs pages, or the dedicated `/waitlist` page. The shared form component
    `idempotency_key` (never silently dropped) and removed.
 
    > The `POST /api/waitlist/queued` endpoint on the operator's server is to
-   > be added on the Mission Control side (separate task). Until it exists,
-   > queued entries cannot be redelivered.
+   > be added in a separate deployment. Until it exists, queued entries
+   > cannot be redelivered.
 
 ### Rate limiting and client IPs
 
@@ -80,7 +80,7 @@ The origin should never be exposed directly.
 
 | Variable | Purpose |
 | --- | --- |
-| `IRONSERVER_MESH_ADDR` | Base URL of the operator's server, reached over the Veld mesh |
+| `WAITLIST_FORWARD_URL` | Base URL of the operator's server, reached over the Veld mesh |
 | `WAITLIST_BEARER_TOKEN` | Bearer token sent to the operator's server |
 | `QUEUE_ENCRYPTION_KEY` | age **public** key (`age1…`) used to encrypt queued entries. The matching private key lives only on the operator's server — never on this host |
 | `LOG_SALT` | Salt for the SHA-256 `email_hash` used in logs (required in production) |
