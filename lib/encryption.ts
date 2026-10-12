@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
+//
+// The web server holds ONLY the age public key (QUEUE_ENCRYPTION_KEY). Queue
+// entries are encrypted with it; they can only be decrypted by the
+// operator's server, which holds the matching private key. There is
+// deliberately no decryption function and no private-key env var on this
+// host: a compromise of the web server must not expose queued signups.
 import { createHash } from "crypto"
-import { Encrypter, Decrypter } from "age-encryption"
+import { Encrypter } from "age-encryption"
 import { CONSENT_LABEL, CONSENT_VERSION, MAX_SOURCE_LENGTH } from "./constants"
 
 function getLogSalt(): string {
@@ -26,25 +32,14 @@ function getEncryptionPublicKey(): string {
   return key
 }
 
-function getDecryptionPrivateKey(): string {
-  const key = process.env.QUEUE_DECRYPTION_KEY
-  if (!key) {
-    throw new Error("QUEUE_DECRYPTION_KEY environment variable is required (age private key starting with 'AGE-SECRET-KEY-1...')")
-  }
-  if (!key.startsWith("AGE-SECRET-KEY-1")) {
-    throw new Error("QUEUE_DECRYPTION_KEY must be an age private key starting with 'AGE-SECRET-KEY-1'")
-  }
-  return key
-}
-
 function toBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64")
 }
 
-function fromBase64(str: string): Uint8Array {
-  return new Uint8Array(Buffer.from(str, "base64"))
-}
-
+/**
+ * Encrypt a queue payload with the age public key. Returns base64 ciphertext
+ * that only the operator's server (holder of the private key) can decrypt.
+ */
 export async function encryptQueueEntry(data: object): Promise<string> {
   const encrypter = new Encrypter()
   encrypter.addRecipient(getEncryptionPublicKey())
@@ -53,14 +48,7 @@ export async function encryptQueueEntry(data: object): Promise<string> {
   return toBase64(ciphertext)
 }
 
-export async function decryptQueueEntry(ciphertextB64: string): Promise<object> {
-  const decrypter = new Decrypter()
-  decrypter.addIdentity(getDecryptionPrivateKey())
-  const ciphertext = fromBase64(ciphertextB64)
-  const plaintext = await decrypter.decrypt(ciphertext, "text")
-  return JSON.parse(plaintext)
-}
-
+/** SHA-256 of email+salt — the only form in which an email may appear in logs. */
 export function hashEmail(email: string): string {
   return createHash("sha256").update(email + getLogSalt()).digest("hex")
 }

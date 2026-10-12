@@ -1,9 +1,18 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
+//
+// Write path for the retry queue. The API route only ever needs to write
+// entries; listing/reading/deleting lives in lib/queue-worker.ts (worker
+// only) so filesystem scanning code stays out of the server bundle.
+//
+// Each entry is stored as a JSON envelope:
+//   { "idempotency_key", "next_retry_at", "retry_count", "ciphertext" }
+// Only `ciphertext` is the age-encrypted signup payload. This host holds
+// only the encryption public key, so the queue is opaque to the web server
+// itself; the operator's server decrypts it with the matching private key.
 import { mkdir, writeFile } from "fs/promises"
 import { join } from "path"
-import { randomUUID } from "crypto"
-import { encryptQueueEntry } from "./encryption"
-import { hashEmail } from "./encryption"
+import { encryptQueueEntry, hashEmail } from "./encryption"
+import type { MeshWaitlistPayload } from "./mesh"
 
 export const QUEUE_DIR = process.env.WAITLIST_QUEUE_DIR ?? "/var/lib/veldsite/waitlist-queue"
 
@@ -11,30 +20,26 @@ export const MAX_QUEUE_FILES = parseInt(process.env.MAX_QUEUE_FILES ?? "10000", 
 export const MAX_QUEUE_SIZE_MB = parseInt(process.env.MAX_QUEUE_SIZE_MB ?? "100", 10)
 export const MAX_QUEUE_SIZE_BYTES = MAX_QUEUE_SIZE_MB * 1024 * 1024
 
-export interface QueuedSubmission {
+export interface QueueEnvelope {
   idempotency_key: string
-  email: string
-  source?: string
-  consent_at: string
-  consent_version: string
-  consent_text_hash: string
-  utm_source?: string
-  utm_medium?: string
-  utm_campaign?: string
-  utm_term?: string
-  utm_content?: string
-  referrer?: string
-  ip_hash?: string
-  queued_at: string
-  retry_count: number
   next_retry_at: string
+  retry_count: number
+  ciphertext: string
 }
+
+export type QueueEntryInput = MeshWaitlistPayload & { ip?: string }
 
 export async function ensureQueueDir(): Promise<void> {
   await mkdir(QUEUE_DIR, { recursive: true, mode: 0o700 })
 }
 
-export async function writeQueueEntry(entry: Omit<QueuedSubmission, "idempotency_key" | "queued_at" | "retry_count" | "next_retry_at" | "ip_hash"> & { ip?: string }): Promise<string> {
+export function queueFilename(queuedAtMs: number, idempotencyKey: string): string {
+  // Leading epoch timestamp: sortable, collision-free, and lets the worker
+  // compute the 24h expiry without storing plaintext metadata in the envelope.
+  return `${queuedAtMs}-${idempotencyKey}.json`
+}
+
+export async function writeQueueEntry(entry: QueueEntryInput): Promise<string> {
   await ensureQueueDir()
 
   // Check queue bounds using worker-only function
@@ -47,24 +52,26 @@ export async function writeQueueEntry(entry: Omit<QueuedSubmission, "idempotency
     throw new Error("QUEUE_FULL: Maximum queue size reached")
   }
 
-  const now = new Date()
-  const timestamp = now.toISOString().replace(/[:.]/g, "-")
-  const filename = `${timestamp}.json.age`
-  const filepath = join(QUEUE_DIR, filename)
+  const now = Date.now()
+  const { ip, ...payload } = entry
 
-  const ipHash = entry.ip ? hashEmail(entry.ip) : undefined
-
-  const queuedEntry: QueuedSubmission = {
-    ...entry,
-    idempotency_key: randomUUID(),
-    ip_hash: ipHash,
-    queued_at: now.toISOString(),
-    retry_count: 0,
-    next_retry_at: now.toISOString(),
+  // The salted IP hash is the only IP-derived value stored, and it lives
+  // inside the encrypted payload.
+  if (ip) {
+    ;(payload as { ip_hash?: string }).ip_hash = hashEmail(ip)
   }
 
-  const encrypted = await encryptQueueEntry(queuedEntry)
-  await writeFile(filepath, encrypted, { mode: 0o600 })
+  const ciphertext = await encryptQueueEntry(payload)
+  const envelope: QueueEnvelope = {
+    idempotency_key: entry.idempotency_key,
+    next_retry_at: new Date(now).toISOString(),
+    retry_count: 0,
+    ciphertext,
+  }
+
+  const filename = queueFilename(now, entry.idempotency_key)
+  const filepath = join(QUEUE_DIR, filename)
+  await writeFile(filepath, JSON.stringify(envelope), { mode: 0o600 })
 
   return filepath
 }

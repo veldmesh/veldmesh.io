@@ -1,128 +1,172 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest"
 
-// Test age key pair (generated for testing only)
-// Public key: age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h
-// Private key: AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG
-process.env.QUEUE_ENCRYPTION_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
-process.env.QUEUE_DECRYPTION_KEY = "AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG"
+// Test age key pair (generated for testing only). The web server only ever
+// sees the public key; the private key stands in for the one held by the
+// operator's server, which is what decrypts queued entries in production.
+const TEST_PUBLIC_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
+const TEST_PRIVATE_KEY = "AGE-SECRET-KEY-1D4SNGZQY8S3MAQWHUGMHZ6CXS2QNCT08X8CRPSH67N7S3GNLCRKSA8QYDG"
+
+process.env.QUEUE_ENCRYPTION_KEY = TEST_PUBLIC_KEY
 process.env.LOG_SALT = "test-salt"
 process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-queue-test"
+process.env.MAX_QUEUE_FILES = "5"
+
+const TEST_QUEUE_DIR = process.env.WAITLIST_QUEUE_DIR
 
 let writeQueueEntry: typeof import("@/lib/queue").writeQueueEntry
-let readQueueEntry: typeof import("@/lib/queue-worker").readQueueEntry
+let readQueueEnvelope: typeof import("@/lib/queue-worker").readQueueEnvelope
 let listQueueFiles: typeof import("@/lib/queue-worker").listQueueFiles
 let deleteQueueFile: typeof import("@/lib/queue-worker").deleteQueueFile
-let updateQueueEntry: typeof import("@/lib/queue-worker").updateQueueEntry
+let updateQueueEnvelope: typeof import("@/lib/queue-worker").updateQueueEnvelope
 let calculateNextRetry: typeof import("@/lib/queue-worker").calculateNextRetry
 let isPermanentFailure: typeof import("@/lib/queue-worker").isPermanentFailure
+let hashEmail: typeof import("@/lib/encryption").hashEmail
 
 beforeAll(async () => {
   const queueMod = await import("@/lib/queue")
   const queueWorkerMod = await import("@/lib/queue-worker")
+  const encryptionMod = await import("@/lib/encryption")
   writeQueueEntry = queueMod.writeQueueEntry
-  readQueueEntry = queueWorkerMod.readQueueEntry
+  readQueueEnvelope = queueWorkerMod.readQueueEnvelope
   listQueueFiles = queueWorkerMod.listQueueFiles
   deleteQueueFile = queueWorkerMod.deleteQueueFile
-  updateQueueEntry = queueWorkerMod.updateQueueEntry
+  updateQueueEnvelope = queueWorkerMod.updateQueueEnvelope
   calculateNextRetry = queueWorkerMod.calculateNextRetry
   isPermanentFailure = queueWorkerMod.isPermanentFailure
+  hashEmail = encryptionMod.hashEmail
 })
 
-const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-queue-test"
+async function decryptForTest(ciphertext: string): Promise<Record<string, unknown>> {
+  const { Decrypter } = await import("age-encryption")
+  const decrypter = new Decrypter()
+  decrypter.addIdentity(TEST_PRIVATE_KEY)
+  const plaintext = await decrypter.decrypt(new Uint8Array(Buffer.from(ciphertext, "base64")), "text")
+  return JSON.parse(plaintext)
+}
+
+const sampleEntry = {
+  idempotency_key: "11111111-2222-3333-4444-555555555555",
+  email: "test@example.com",
+  source: "home",
+  consent_at: "2026-01-01T00:00:00.000Z",
+  consent_version: "1.0",
+  consent_text_hash: "abc123",
+  utm_source: "google",
+  utm_medium: "cpc",
+  utm_campaign: "launch",
+  utm_term: "test",
+  utm_content: "banner",
+  referrer: "https://example.com",
+}
 
 describe("queue", () => {
   beforeEach(async () => {
-    await import("fs/promises").then((fs) => fs.rm(TEST_QUEUE_DIR, { recursive: true, force: true }))
-    await import("fs/promises").then((fs) => fs.mkdir(TEST_QUEUE_DIR, { recursive: true }))
+    const fs = await import("fs/promises")
+    await fs.rm(TEST_QUEUE_DIR, { recursive: true, force: true })
+    await fs.mkdir(TEST_QUEUE_DIR, { recursive: true })
   })
 
   afterEach(async () => {
-    await import("fs/promises").then((fs) => fs.rm(TEST_QUEUE_DIR, { recursive: true, force: true }))
+    const fs = await import("fs/promises")
+    await fs.rm(TEST_QUEUE_DIR, { recursive: true, force: true })
   })
 
-  const sampleEntry = {
-    email: "test@example.com",
-    source: "test-source",
-    consent_at: "2026-01-01T00:00:00.000Z",
-    consent_version: "1.0",
-    consent_text_hash: "abc123",
-    utm_source: "google",
-    utm_medium: "cpc",
-    utm_campaign: "launch",
-    utm_term: "test",
-    utm_content: "banner",
-    referrer: "https://example.com",
-  }
-
-  it("writes and reads queue entries with encryption", async () => {
+  it("writes entries as {idempotency_key, next_retry_at, retry_count, ciphertext} envelopes", async () => {
     const filepath = await writeQueueEntry(sampleEntry)
-    expect(filepath).toContain(".json.age")
+    expect(filepath).toMatch(/\.json$/)
 
-    const entry = await readQueueEntry(filepath)
-    expect(entry).not.toBeNull()
-    expect(entry!.email).toBe(sampleEntry.email)
-    expect(entry!.source).toBe(sampleEntry.source)
-    expect(entry!.consent_at).toBe(sampleEntry.consent_at)
-    expect(entry!.consent_version).toBe(sampleEntry.consent_version)
-    expect(entry!.consent_text_hash).toBe(sampleEntry.consent_text_hash)
-    expect(entry!.utm_source).toBe(sampleEntry.utm_source)
-    expect(entry!.referrer).toBe(sampleEntry.referrer)
-    expect(entry!.queued_at).toBeDefined()
-    expect(entry!.retry_count).toBe(0)
-    expect(entry!.next_retry_at).toBeDefined()
-    expect(entry!.idempotency_key).toBeDefined()
+    const envelope = await readQueueEnvelope(filepath)
+    expect(envelope).not.toBeNull()
+    expect(envelope!.idempotency_key).toBe(sampleEntry.idempotency_key)
+    expect(envelope!.retry_count).toBe(0)
+    expect(envelope!.next_retry_at).toBeDefined()
+    expect(typeof envelope!.ciphertext).toBe("string")
+    expect(Object.keys(envelope!).sort()).toEqual(["ciphertext", "idempotency_key", "next_retry_at", "retry_count"])
   })
 
-  it("queue file is not valid JSON (encrypted)", async () => {
+  it("queue file contains no plaintext personal data", async () => {
     const filepath = await writeQueueEntry(sampleEntry)
-    const rawContent = await import("fs/promises").then((fs) => fs.readFile(filepath, "utf-8"))
-    
-    expect(() => JSON.parse(rawContent)).toThrow()
-    // File is base64 encoded, decode to check for age header
-    const decoded = Buffer.from(rawContent, "base64").toString("utf-8")
+    const fs = await import("fs/promises")
+    const raw = await fs.readFile(filepath, "utf-8")
+
+    // The envelope itself is JSON, but must not leak any signup fields.
+    const parsed = JSON.parse(raw)
+    expect(Object.keys(parsed).sort()).toEqual(["ciphertext", "idempotency_key", "next_retry_at", "retry_count"])
+    expect(raw).not.toContain("test@example.com")
+    expect(raw).not.toContain("google")
+    expect(parsed.ciphertext).not.toContain("test@example.com")
+
+    // The ciphertext is age-encrypted, not JSON.
+    expect(() => JSON.parse(parsed.ciphertext)).toThrow()
+    const decoded = Buffer.from(parsed.ciphertext, "base64").toString("utf-8")
     expect(decoded).toContain("age-encryption.org")
+    expect(decoded).not.toContain("test@example.com")
   })
 
-  it("decryption recovers original fields", async () => {
+  it("decryption (on the operator's server) recovers the original fields", async () => {
+    const filepath = await writeQueueEntry({ ...sampleEntry, ip: "203.0.113.10" })
+    const envelope = await readQueueEnvelope(filepath)
+    expect(envelope).not.toBeNull()
+
+    const payload = await decryptForTest(envelope!.ciphertext)
+    expect(payload.email).toBe(sampleEntry.email)
+    expect(payload.source).toBe(sampleEntry.source)
+    expect(payload.consent_at).toBe(sampleEntry.consent_at)
+    expect(payload.consent_version).toBe(sampleEntry.consent_version)
+    expect(payload.consent_text_hash).toBe(sampleEntry.consent_text_hash)
+    expect(payload.utm_source).toBe(sampleEntry.utm_source)
+    expect(payload.utm_medium).toBe(sampleEntry.utm_medium)
+    expect(payload.utm_campaign).toBe(sampleEntry.utm_campaign)
+    expect(payload.utm_term).toBe(sampleEntry.utm_term)
+    expect(payload.utm_content).toBe(sampleEntry.utm_content)
+    expect(payload.referrer).toBe(sampleEntry.referrer)
+    expect(payload.idempotency_key).toBe(sampleEntry.idempotency_key)
+  })
+
+  it("stores the client IP only as a salted hash inside the encrypted payload", async () => {
+    const filepath = await writeQueueEntry({ ...sampleEntry, ip: "203.0.113.10" })
+    const envelope = await readQueueEnvelope(filepath)
+    const payload = await decryptForTest(envelope!.ciphertext)
+
+    expect(payload.ip_hash).toBe(hashEmail("203.0.113.10"))
+  })
+
+  it("omits ip_hash when no IP is provided", async () => {
     const filepath = await writeQueueEntry(sampleEntry)
-    const entry = await readQueueEntry(filepath)
-    
-    expect(entry).not.toBeNull()
-    expect(entry!.email).toBe(sampleEntry.email)
-    expect(entry!.consent_version).toBe(sampleEntry.consent_version)
-    expect(entry!.consent_text_hash).toBe(sampleEntry.consent_text_hash)
+    const envelope = await readQueueEnvelope(filepath)
+    const payload = await decryptForTest(envelope!.ciphertext)
+
+    expect(payload.ip_hash).toBeUndefined()
   })
 
-  it("lists queue files", async () => {
-    await writeQueueEntry({ ...sampleEntry, email: "a@example.com" })
-    await writeQueueEntry({ ...sampleEntry, email: "b@example.com" })
-    await writeQueueEntry({ ...sampleEntry, email: "c@example.com" })
-
+  it("lists, updates and deletes queue entries", async () => {
+    const a = await writeQueueEntry(sampleEntry)
+    const b = await writeQueueEntry({ ...sampleEntry, idempotency_key: "aaaaaaaa-2222-3333-4444-555555555555" })
     const files = await listQueueFiles()
-    expect(files).toHaveLength(3)
-  })
+    expect(files).toHaveLength(2)
 
-  it("deletes queue files", async () => {
-    const filepath = await writeQueueEntry(sampleEntry)
-    await deleteQueueFile(filepath)
+    const envelope = await readQueueEnvelope(a)
+    envelope!.retry_count = 2
+    envelope!.next_retry_at = new Date(Date.now() + 60_000).toISOString()
+    await updateQueueEnvelope(a, envelope!)
 
-    const entry = await readQueueEntry(filepath)
-    expect(entry).toBeNull()
-  })
-
-  it("updates queue entries", async () => {
-    const filepath = await writeQueueEntry(sampleEntry)
-    const entry = await readQueueEntry(filepath)
-    expect(entry).not.toBeNull()
-    expect(entry!.retry_count).toBe(0)
-
-    entry!.retry_count = 2
-    entry!.next_retry_at = new Date(Date.now() + 60_000).toISOString()
-    await updateQueueEntry(filepath, entry!)
-
-    const updated = await readQueueEntry(filepath)
+    const updated = await readQueueEnvelope(a)
     expect(updated!.retry_count).toBe(2)
+    // ciphertext is carried over untouched on update
+    expect(updated!.ciphertext).toBe(envelope!.ciphertext)
+
+    await deleteQueueFile(b)
+    expect(await readQueueEnvelope(b)).toBeNull()
+    expect(await listQueueFiles()).toHaveLength(1)
+  })
+
+  it("returns null for corrupted files", async () => {
+    const fs = await import("fs/promises")
+    const { join } = await import("path")
+    const filepath = join(TEST_QUEUE_DIR, "1234567890123-corrupt.json")
+    await fs.writeFile(filepath, "not-json", "utf-8")
+    expect(await readQueueEnvelope(filepath)).toBeNull()
   })
 
   it("calculateNextRetry uses exponential backoff with max 5m", () => {
@@ -137,43 +181,27 @@ describe("queue", () => {
     expect(retry10.getTime() - Date.now()).toBeLessThanOrEqual(5 * 60 * 1000 + 1000)
   })
 
-  it("isPermanentFailure returns true after 24h", () => {
-    const oldEntry = {
-      idempotency_key: "test-key-1",
-      email: "test@example.com",
-      source: "test-source",
-      consent_at: "2026-01-01T00:00:00.000Z",
-      consent_version: "1.0",
-      consent_text_hash: "abc123",
-      utm_source: "google",
-      utm_medium: "cpc",
-      utm_campaign: "launch",
-      utm_term: "test",
-      utm_content: "banner",
-      referrer: "https://example.com",
-      queued_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
-      retry_count: 5,
-      next_retry_at: new Date().toISOString(),
-    }
-    expect(isPermanentFailure(oldEntry)).toBe(true)
+  it("isPermanentFailure is based on the queued-at timestamp in the filename", async () => {
+    const fresh = await writeQueueEntry(sampleEntry)
+    expect(isPermanentFailure(fresh)).toBe(false)
 
-    const newEntry = {
-      idempotency_key: "test-key-2",
-      email: "test@example.com",
-      source: "test-source",
-      consent_at: "2026-01-01T00:00:00.000Z",
-      consent_version: "1.0",
-      consent_text_hash: "abc123",
-      utm_source: "google",
-      utm_medium: "cpc",
-      utm_campaign: "launch",
-      utm_term: "test",
-      utm_content: "banner",
-      referrer: "https://example.com",
-      queued_at: new Date().toISOString(),
-      retry_count: 5,
-      next_retry_at: new Date().toISOString(),
+    const { join } = await import("path")
+    const oldMs = Date.now() - 25 * 60 * 60 * 1000
+    const expired = join(TEST_QUEUE_DIR, `${oldMs}-old-uuid.json`)
+    expect(isPermanentFailure(expired)).toBe(true)
+
+    const unparseable = join(TEST_QUEUE_DIR, "not-a-timestamp.json")
+    expect(isPermanentFailure(unparseable)).toBe(true)
+  })
+
+  it("rejects new entries when the queue is full (QUEUE_FULL)", async () => {
+    const fs = await import("fs/promises")
+    const { join } = await import("path")
+    // MAX_QUEUE_FILES=5 in this test file's environment
+    for (let i = 0; i < 5; i++) {
+      await fs.writeFile(join(TEST_QUEUE_DIR, `${1700000000000 + i}-filler.json`), "{}", "utf-8")
     }
-    expect(isPermanentFailure(newEntry)).toBe(false)
+
+    await expect(writeQueueEntry(sampleEntry)).rejects.toThrow("QUEUE_FULL")
   })
 })
