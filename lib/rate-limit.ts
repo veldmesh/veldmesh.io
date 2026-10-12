@@ -100,3 +100,10 @@ export const waitlistRateLimiter = createRateLimiter({
 export function startRateLimitCleanup(): void {
   startCleanupInterval(60_000)
 }
+
+// Auto-start cleanup for long-running processes (e.g., Next.js dev server, Docker).
+// In serverless environments the process exits before the interval fires, so
+// this is effectively a no-op there.
+if (typeof process !== "undefined" && process.env.NODE_ENV !== "test") {
+  startRateLimitCleanup()
+}
