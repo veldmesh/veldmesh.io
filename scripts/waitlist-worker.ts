@@ -5,7 +5,7 @@
 //   npx tsx scripts/waitlist-worker.ts
 import { processQueue } from "@/lib/queue-worker"
 import { logError, logInfo } from "@/lib/logging"
-import { startRateLimitCleanup } from "@/lib/rate-limit"
+import { startRateLimitCleanup, stopRateLimitCleanup } from "@/lib/rate-limit"
 
 const WORKER_INTERVAL_MS = 30_000
 
@@ -45,8 +45,7 @@ export async function stopWorker(): Promise<void> {
       await currentProcessingPromise
     }
     // Stop the rate limiter cleanup interval
-    const { waitlistRateLimiter } = await import("@/lib/rate-limit")
-    waitlistRateLimiter.stopCleanup()
+    stopRateLimitCleanup()
     logInfo("Stopped waitlist queue worker")
   }
 }

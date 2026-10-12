@@ -8,22 +8,23 @@ describe("mesh client", () => {
     process.env.LOG_SALT = "test-salt"
   })
 
+  const basePayload = {
+    idempotency_key: "key-1",
+    email: "user@example.com",
+    source: "website",
+    consent_at: new Date().toISOString(),
+    consent_version: "1.0",
+    consent_text_hash: "hash",
+    consent_label: "I agree to receive updates from Veldmesh and understand I can unsubscribe at any time.",
+  }
+
   it("uses the default 10s timeout when MESH_TIMEOUT_MS is not set", async () => {
     delete process.env.MESH_TIMEOUT_MS
     const { postToMesh } = await import("@/lib/mesh")
 
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 })
 
-    const payload = {
-      idempotency_key: "key-1",
-      email: "user@example.com",
-      source: "website",
-      consent_at: new Date().toISOString(),
-      consent_version: "1.0",
-      consent_text_hash: "hash",
-    }
-
-    const result = await postToMesh(payload)
+    const result = await postToMesh(basePayload)
     expect(result.ok).toBe(true)
     expect(result.status).toBe(200)
   })
@@ -34,16 +35,7 @@ describe("mesh client", () => {
 
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 })
 
-    const payload = {
-      idempotency_key: "key-1",
-      email: "user@example.com",
-      source: "website",
-      consent_at: new Date().toISOString(),
-      consent_version: "1.0",
-      consent_text_hash: "hash",
-    }
-
-    const result = await postToMesh(payload)
+    const result = await postToMesh(basePayload)
     expect(result.ok).toBe(true)
     expect(result.status).toBe(200)
   })
@@ -54,16 +46,7 @@ describe("mesh client", () => {
 
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 })
 
-    const payload = {
-      idempotency_key: "key-1",
-      email: "user@example.com",
-      source: "website",
-      consent_at: new Date().toISOString(),
-      consent_version: "1.0",
-      consent_text_hash: "hash",
-    }
-
-    const result = await postToMesh(payload)
+    const result = await postToMesh(basePayload)
     expect(result.ok).toBe(true)
   })
 
@@ -78,16 +61,7 @@ describe("mesh client", () => {
         })
     )
 
-    const payload = {
-      idempotency_key: "key-1",
-      email: "user@example.com",
-      source: "website",
-      consent_at: new Date().toISOString(),
-      consent_version: "1.0",
-      consent_text_hash: "hash",
-    }
-
-    const promise = postToMesh(payload)
+    const promise = postToMesh(basePayload)
     // Give the setTimeout a chance to fire by advancing time — but since we
     // can't easily fast-forward timers, we just verify the fetch was called
     // with a signal (the timeout mechanism is wired up).

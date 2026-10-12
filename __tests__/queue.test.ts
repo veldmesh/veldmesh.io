@@ -57,6 +57,7 @@ const sampleEntry = {
   consent_at: "2026-01-01T00:00:00.000Z",
   consent_version: "1.0",
   consent_text_hash: "abc123",
+  consent_label: "I agree to receive updates from Veldmesh and understand I can unsubscribe at any time.",
   utm_source: "google",
   utm_medium: "cpc",
   utm_campaign: "launch",
@@ -195,8 +196,11 @@ describe("queue", () => {
     const expired = join(TEST_QUEUE_DIR, `${oldMs}-old-uuid.json`)
     expect(isPermanentFailure(expired)).toBe(true)
 
+    // Unparseable filenames are NOT treated as expired: the corruption
+    // handler in processQueue deals with them, so isPermanentFailure
+    // must not misclassify valid-but-oddly-named files as expired.
     const unparseable = join(TEST_QUEUE_DIR, "not-a-timestamp.json")
-    expect(isPermanentFailure(unparseable)).toBe(true)
+    expect(isPermanentFailure(unparseable)).toBe(false)
   })
 
   it("rejects new entries when the queue is full (QUEUE_FULL)", async () => {

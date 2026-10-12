@@ -54,10 +54,6 @@ export interface RateLimitResult {
 }
 
 export function createRateLimiter(config: RateLimitConfig) {
-  // Cleanup interval is NOT started here; it must be started explicitly
-  // via startRateLimitCleanup() when the worker initializes. This avoids
-  // leaking intervals when the module is imported but the worker never runs.
-
   return {
     check(identifier: string): RateLimitResult {
       const now = Date.now()
@@ -84,10 +80,6 @@ export function createRateLimiter(config: RateLimitConfig) {
     clear(): void {
       memoryStore.clear()
     },
-
-    stopCleanup(): void {
-      stopCleanupInterval()
-    },
   }
 }
 
@@ -99,6 +91,11 @@ export const waitlistRateLimiter = createRateLimiter({
 /** Start the cleanup interval (call once at worker/app startup). */
 export function startRateLimitCleanup(): void {
   startCleanupInterval(60_000)
+}
+
+/** Stop the cleanup interval. */
+export function stopRateLimitCleanup(): void {
+  stopCleanupInterval()
 }
 
 // Auto-start cleanup for long-running processes (e.g., Next.js dev server, Docker).

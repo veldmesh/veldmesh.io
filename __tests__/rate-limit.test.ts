@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { createRateLimiter, waitlistRateLimiter } from "@/lib/rate-limit"
+import { createRateLimiter, waitlistRateLimiter, startRateLimitCleanup, stopRateLimitCleanup } from "@/lib/rate-limit"
 
 describe("createRateLimiter", () => {
   let limiter: ReturnType<typeof createRateLimiter>
@@ -103,11 +103,11 @@ describe("createRateLimiter", () => {
     }
   })
 
-  it("stopCleanup stops the cleanup interval", () => {
-    const limiter2 = createRateLimiter({ maxRequests: 3, windowMs: 60_000 })
-    expect(() => limiter2.stopCleanup()).not.toThrow()
+  it("stopRateLimitCleanup stops the cleanup interval without throwing", () => {
+    startRateLimitCleanup()
+    expect(() => stopRateLimitCleanup()).not.toThrow()
     // Calling again should not throw
-    expect(() => limiter2.stopCleanup()).not.toThrow()
+    expect(() => stopRateLimitCleanup()).not.toThrow()
   })
 })
 

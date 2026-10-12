@@ -32,9 +32,10 @@ docs pages, or the dedicated `/waitlist` page. The shared form component
    Submissions that fill it are bots: they receive the normal generic success
    response, but the signup is dropped and never forwarded anywhere.
 3. **Delivery** (`lib/mesh.ts`) — valid signups are forwarded server-side to
-   the operator's server, reached over the Veld mesh, with a bearer token.
+   the operator's server with a bearer token.
    The payload carries `email`, `source`, `consent_at`, `consent_version`,
-   `consent_text_hash`, any `utm_*` tags, the referrer, and an
+   `consent_text_hash`, `consent_label` (the exact text the user agreed to),
+   any `utm_*` tags, the referrer, and an
    `idempotency_key` so retries can be deduplicated. `source` is always set:
    forms send the page they live on (`home`, `features`, `docs`, `waitlist`)
    or the visitor's free-text answer; anything else defaults to `website`.
@@ -65,10 +66,10 @@ The operator's server (separate deployment) must implement two endpoints:
 
 **`POST /api/waitlist`** — accepts a fresh signup. Request body:
 `{idempotency_key, email, source, consent_at, consent_version,
-consent_text_hash, utm_source?, utm_medium?, utm_campaign?, utm_term?,
-utm_content?, referrer?}`. Must return 2xx on acceptance, 400/422 for
-validation errors (permanent — not retried), 408/429/5xx for transient
-errors (retried and queued).
+consent_text_hash, consent_label, utm_source?, utm_medium?, utm_campaign?,
+utm_term?, utm_content?, referrer?}`. Must return 2xx on acceptance,
+400/422 for validation errors (permanent — not retried), 408/429/5xx for
+transient errors (retried and queued).
 
 **`POST /api/waitlist/queued`** — accepts a previously-queued signup for
 redelivery. Request body: `{idempotency_key, ciphertext}` where `ciphertext`
@@ -97,7 +98,7 @@ The origin should never be exposed directly.
 
 | Variable | Purpose |
 | --- | --- |
-| `WAITLIST_FORWARD_URL` | Base URL of the operator's server, reached over the Veld mesh |
+| `WAITLIST_FORWARD_URL` | Base URL of the operator's server (e.g. `https://example.com/api/waitlist`) |
 | `WAITLIST_BEARER_TOKEN` | Bearer token sent to the operator's server |
 | `QUEUE_ENCRYPTION_KEY` | age **public** key (`age1…`) used to encrypt queued entries. The matching private key lives only on the operator's server — never on this host |
 | `LOG_SALT` | Salt for the SHA-256 `email_hash` used in logs (required in production) |

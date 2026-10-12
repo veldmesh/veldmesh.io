@@ -71,7 +71,7 @@ export function queuedAtFromFilename(filepath: string): number | null {
 /** Entries older than 24h are permanent failures and must not be retried forever. */
 export function isPermanentFailure(filepath: string, now: number = Date.now()): boolean {
   const queuedAt = queuedAtFromFilename(filepath)
-  if (queuedAt === null) return true // unparseable name — treat as expired
+  if (queuedAt === null) return false // unparseable name — let the corruption handler deal with it
   return now - queuedAt > ENTRY_EXPIRY_MS
 }
 

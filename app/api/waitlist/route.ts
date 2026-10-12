@@ -6,7 +6,7 @@ import { waitlistRateLimiter } from "@/lib/rate-limit"
 import { getClientIp } from "@/lib/client-ip"
 import { postToMesh, isValidationStatus } from "@/lib/mesh"
 import { writeQueueEntry } from "@/lib/queue"
-import { CONSENT_VERSION, DEFAULT_SOURCE, MAX_SOURCE_LENGTH, HONEYPOT_FIELD } from "@/lib/constants"
+import { CONSENT_VERSION, CONSENT_LABEL, DEFAULT_SOURCE, MAX_SOURCE_LENGTH, HONEYPOT_FIELD } from "@/lib/constants"
 import { CONSENT_TEXT_HASH, hashEmail } from "@/lib/encryption"
 import { logInfo, logWarn, logError } from "@/lib/logging"
 
@@ -77,6 +77,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     consent_at,
     consent_version: CONSENT_VERSION,
     consent_text_hash: CONSENT_TEXT_HASH,
+    consent_label: CONSENT_LABEL,
     utm_source,
     utm_medium,
     utm_campaign,

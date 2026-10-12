@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 //
-// Client for the operator's server, reached over the Veld mesh. All
-// addresses and credentials come from environment variables; nothing about
-// the server is hardcoded here.
+// Client for the operator's server. All addresses and credentials come from
+// environment variables; nothing about the server is hardcoded here.
 import { logError, logInfo } from "./logging"
 
 function getMeshTimeoutMs(): number {
@@ -19,6 +18,7 @@ export interface MeshWaitlistPayload {
   consent_at: string
   consent_version: string
   consent_text_hash: string
+  consent_label: string
   utm_source?: string
   utm_medium?: string
   utm_campaign?: string
