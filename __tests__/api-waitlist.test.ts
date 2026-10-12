@@ -16,7 +16,7 @@ beforeAll(async () => {
   process.env.QUEUE_ENCRYPTION_KEY = TEST_PUBLIC_KEY
   process.env.LOG_SALT = "test-salt"
   process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-api-test"
-  process.env.WAITLIST_FORWARD_URL = "https://example.com/api/waitlist"
+  process.env.WAITLIST_FORWARD_URL = "https://example.com"
   process.env.WAITLIST_BEARER_TOKEN = "test-token"
 })
 
@@ -119,7 +119,7 @@ describe("API /api/waitlist", () => {
       const res = await POST(createRequest({ email: "user@example.com", consent: true }))
       expect(res.status).toBe(201)
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://example.com/api/waitlist/api/waitlist",
+        "https://example.com/api/waitlist",
         expect.objectContaining({
           body: expect.stringContaining('"source":"website"'),
         })
@@ -132,7 +132,7 @@ describe("API /api/waitlist", () => {
         const res = await POST(createRequest({ email: "user@example.com", consent: true, source: pageSource }))
         expect(res.status).toBe(201)
         expect(global.fetch).toHaveBeenLastCalledWith(
-          "https://example.com/api/waitlist/api/waitlist",
+          "https://example.com/api/waitlist",
           expect.objectContaining({
             body: expect.stringContaining(`"source":"${pageSource}"`),
           })
@@ -145,7 +145,7 @@ describe("API /api/waitlist", () => {
       const res = await POST(createRequest({ email: "user@example.com", consent: true, source: "Hacker News" }))
       expect(res.status).toBe(201)
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://example.com/api/waitlist/api/waitlist",
+        "https://example.com/api/waitlist",
         expect.objectContaining({
           body: expect.stringContaining('"source":"Hacker News"'),
         })
@@ -156,7 +156,7 @@ describe("API /api/waitlist", () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 })
       await POST(createRequest({ email: "user@example.com", consent: true, source: "   " }))
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://example.com/api/waitlist/api/waitlist",
+        "https://example.com/api/waitlist",
         expect.objectContaining({
           body: expect.stringContaining('"source":"website"'),
         })
