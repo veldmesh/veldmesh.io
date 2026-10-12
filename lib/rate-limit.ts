@@ -54,7 +54,9 @@ export interface RateLimitResult {
 }
 
 export function createRateLimiter(config: RateLimitConfig) {
-  startCleanupInterval(config.windowMs)
+  // Cleanup interval is NOT started here; it must be started explicitly
+  // via startRateLimitCleanup() when the worker initializes. This avoids
+  // leaking intervals when the module is imported but the worker never runs.
 
   return {
     check(identifier: string): RateLimitResult {
@@ -93,3 +95,8 @@ export const waitlistRateLimiter = createRateLimiter({
   maxRequests: 5,
   windowMs: 60_000,
 })
+
+/** Start the cleanup interval (call once at worker/app startup). */
+export function startRateLimitCleanup(): void {
+  startCleanupInterval(60_000)
+}

@@ -5,7 +5,12 @@
 // the server is hardcoded here.
 import { logError, logInfo } from "./logging"
 
-const MESH_TIMEOUT_MS = 10_000
+function getMeshTimeoutMs(): number {
+  const val = process.env.MESH_TIMEOUT_MS
+  if (!val) return 10_000
+  const parsed = parseInt(val, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 10_000
+}
 
 export interface MeshWaitlistPayload {
   idempotency_key: string
@@ -66,7 +71,7 @@ export function isValidationStatus(status: number): boolean {
 
 async function meshPost(path: string, body: unknown, email: string | undefined, consent_at: string | undefined): Promise<MeshResult> {
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), MESH_TIMEOUT_MS)
+  const timeoutId = setTimeout(() => controller.abort(), getMeshTimeoutMs())
 
   try {
     const response = await fetch(`${getMeshAddr()}${path}`, {

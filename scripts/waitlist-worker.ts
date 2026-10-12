@@ -5,6 +5,7 @@
 //   npx tsx scripts/waitlist-worker.ts
 import { processQueue } from "@/lib/queue-worker"
 import { logError, logInfo } from "@/lib/logging"
+import { startRateLimitCleanup } from "@/lib/rate-limit"
 
 const WORKER_INTERVAL_MS = 30_000
 
@@ -26,6 +27,8 @@ async function runProcessQueue(): Promise<void> {
 
 export function startWorker(): void {
   if (intervalId) return
+  // Start the rate limiter cleanup interval now that the worker is running
+  startRateLimitCleanup()
   logInfo("Starting waitlist queue worker")
   intervalId = setInterval(() => {
     currentProcessingPromise = runProcessQueue()

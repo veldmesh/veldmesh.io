@@ -59,9 +59,26 @@ docs pages, or the dedicated `/waitlist` page. The shared form component
    permanently rejected by the server, are logged at ERROR with their
    `idempotency_key` (never silently dropped) and removed.
 
-   > The `POST /api/waitlist/queued` endpoint on the operator's server is to
-   > be added in a separate deployment. Until it exists, queued entries
-   > cannot be redelivered.
+### Operator's server contract
+
+The operator's server (separate deployment) must implement two endpoints:
+
+**`POST /api/waitlist`** — accepts a fresh signup. Request body:
+`{idempotency_key, email, source, consent_at, consent_version,
+consent_text_hash, utm_source?, utm_medium?, utm_campaign?, utm_term?,
+utm_content?, referrer?}`. Must return 2xx on acceptance, 400/422 for
+validation errors (permanent — not retried), 408/429/5xx for transient
+errors (retried and queued).
+
+**`POST /api/waitlist/queued`** — accepts a previously-queued signup for
+redelivery. Request body: `{idempotency_key, ciphertext}` where `ciphertext`
+is the base64 age-encrypted original payload. The operator's server decrypts
+it with the age private key (matching `QUEUE_ENCRYPTION_KEY`'s public key),
+stores the signup if the `idempotency_key` has not been seen (deduplication),
+and returns 2xx on success. 400/422 are permanent rejections (entry is
+removed from the queue and logged); 408/429/5xx are retryable.
+
+Both endpoints require `Authorization: Bearer <WAITLIST_BEARER_TOKEN>`.
 
 ### Rate limiting and client IPs
 
@@ -86,6 +103,7 @@ The origin should never be exposed directly.
 | `LOG_SALT` | Salt for the SHA-256 `email_hash` used in logs (required in production) |
 | `WAITLIST_QUEUE_DIR` | Queue directory (default `/var/lib/veldsite/waitlist-queue`) |
 | `MAX_QUEUE_FILES`, `MAX_QUEUE_SIZE_MB` | Optional caps; new signups are rejected with `503` when the queue is full |
+| `MESH_TIMEOUT_MS` | Optional: timeout in milliseconds for requests to the operator's server (default `10000`) |
 
 See `.env.example`. Never commit real values.
 
