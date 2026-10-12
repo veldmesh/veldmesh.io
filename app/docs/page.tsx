@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import type { Metadata } from "next"
 import Link from "next/link"
+import { WaitlistForm } from "@/components/waitlist-form"
 
 export const metadata: Metadata = {
   title: "Docs — Veld",
@@ -164,6 +165,16 @@ ping 192.168.1.100`}
                 ))}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="mt-16 rounded-2xl border border-slate-100 bg-slate-50 px-6 py-12 text-center sm:px-10">
+          <h2 className="text-2xl font-bold text-slate-900">Join the waitlist</h2>
+          <p className="mx-auto mt-2 max-w-md text-slate-600">
+            Get early access to Veldmesh. We&rsquo;ll notify you when it&rsquo;s ready.
+          </p>
+          <div className="mx-auto mt-8 max-w-md">
+            <WaitlistForm pageSource="docs" />
           </div>
         </section>
       </div>
