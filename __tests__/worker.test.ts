@@ -1,11 +1,18 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest"
+import { generateIdentity, identityToRecipient } from "age-encryption"
 
-process.env.QUEUE_ENCRYPTION_KEY = "age1qhps403l6r56efhkfefu9pxmzyn96ea8c0m9pn3khm3m5cjdhg3spg730h"
-process.env.LOG_SALT = "test-salt"
-process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-worker-test"
+// Generate a fresh age key pair for each test run — no secrets committed.
+beforeAll(async () => {
+  const privateKey = await generateIdentity()
+  const publicKey = await identityToRecipient(privateKey)
 
-const TEST_QUEUE_DIR = process.env.WAITLIST_QUEUE_DIR
+  process.env.QUEUE_ENCRYPTION_KEY = publicKey
+  process.env.LOG_SALT = "test-salt"
+  process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-worker-test"
+})
+
+const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-worker-test"
 
 vi.mock("@/lib/mesh", () => ({
   postQueuedToMesh: vi.fn(),
