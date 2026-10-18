@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest"
 import { Decrypter, generateIdentity, identityToRecipient } from "age-encryption"
 
 // Generate a fresh age key pair for each test run — no secrets committed.
@@ -238,6 +238,36 @@ describe("queue", () => {
     }
 
     await expect(writeQueueEntry(sampleEntry)).rejects.toThrow("QUEUE_FULL")
+  })
+
+  it("rejects new entries when the queue is full (QUEUE_FULL) by size limit", async () => {
+    const fs = await import("fs/promises")
+    const { join } = await import("path")
+    // Create a couple of entries first
+    await writeQueueEntry(sampleEntry)
+    await writeQueueEntry({ ...sampleEntry, idempotency_key: "size-test-2" })
+
+    // Set size limit very small (1KB)
+    const originalSizeLimit = process.env.MAX_QUEUE_SIZE_MB
+    vi.stubEnv("MAX_QUEUE_SIZE_MB", "0.001")
+    vi.resetModules()
+    const queueMod = await import("@/lib/queue")
+    writeQueueEntry = queueMod.writeQueueEntry
+
+    // Write a file that exceeds the tiny limit
+    await fs.writeFile(join(TEST_QUEUE_DIR, `${Date.now()}-large.json`), "x".repeat(2048), "utf-8")
+
+    await expect(writeQueueEntry({ ...sampleEntry, idempotency_key: "size-test-3" })).rejects.toThrow("QUEUE_FULL")
+
+    // Restore original limit
+    if (originalSizeLimit !== undefined) {
+      vi.stubEnv("MAX_QUEUE_SIZE_MB", originalSizeLimit)
+    } else {
+      vi.unstubAllEnvs()
+    }
+    vi.resetModules()
+    const restoredMod = await import("@/lib/queue")
+    writeQueueEntry = restoredMod.writeQueueEntry
   })
 
   it("moveToRejected moves file to rejected/ subdirectory", async () => {
