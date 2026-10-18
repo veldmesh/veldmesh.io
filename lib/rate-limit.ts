@@ -20,6 +20,7 @@ interface RateLimitEntry {
 }
 
 const memoryStore = new Map<string, RateLimitEntry>()
+const mutexStore = new Map<string, Promise<RateLimitResult>>()
 
 let cleanupInterval: NodeJS.Timeout | null = null
 
@@ -73,12 +74,30 @@ export function createRateLimiter(config: RateLimitConfig) {
       return { allowed: true, remaining: config.maxRequests - entry.count, resetAt: entry.resetAt }
     },
 
+    /** Check with a per-identifier mutex to serialize concurrent checks. */
+    async checkAsync(identifier: string): Promise<RateLimitResult> {
+      // Chain onto any in-flight check for this identifier
+      const previous = mutexStore.get(identifier) ?? Promise.resolve()
+      const current = previous.then(() => this.check(identifier))
+      mutexStore.set(identifier, current)
+
+      try {
+        return await current
+      } finally {
+        // Clean up if this is still the latest promise
+        if (mutexStore.get(identifier) === current) {
+          mutexStore.delete(identifier)
+        }
+      }
+    },
+
     reset(identifier: string): void {
       memoryStore.delete(identifier)
     },
 
     clear(): void {
       memoryStore.clear()
+      mutexStore.clear()
     },
   }
 }

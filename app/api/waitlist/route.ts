@@ -39,7 +39,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const clientIp = getClientIp(request.headers)
-  const rateLimitResult = waitlistRateLimiter.check(clientIp)
+  const rateLimitResult = await waitlistRateLimiter.checkAsync(clientIp)
 
   if (!rateLimitResult.allowed) {
     logWarn("Rate limit exceeded for waitlist signup", undefined, undefined, "RATE_LIMIT_EXCEEDED", { ip_hash: hashEmail(clientIp) })

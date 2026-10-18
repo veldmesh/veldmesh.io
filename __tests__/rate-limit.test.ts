@@ -109,6 +109,54 @@ describe("createRateLimiter", () => {
     // Calling again should not throw
     expect(() => stopRateLimitCleanup()).not.toThrow()
   })
+
+  describe("checkAsync (mutex-protected)", () => {
+    it("serializes concurrent checks for the same identifier", async () => {
+      const asyncLimiter = createRateLimiter({ maxRequests: 2, windowMs: 60_000 })
+      const results = await Promise.all([
+        asyncLimiter.checkAsync("async-ip"),
+        asyncLimiter.checkAsync("async-ip"),
+        asyncLimiter.checkAsync("async-ip"),
+      ])
+
+      // First two allowed, third blocked
+      expect(results.filter((r) => r.allowed)).toHaveLength(2)
+      expect(results.filter((r) => !r.allowed)).toHaveLength(1)
+      expect(results[2].allowed).toBe(false)
+    })
+
+    it("allows concurrent checks for different identifiers", async () => {
+      const asyncLimiter = createRateLimiter({ maxRequests: 1, windowMs: 60_000 })
+      const results = await Promise.all([
+        asyncLimiter.checkAsync("async-ip-a"),
+        asyncLimiter.checkAsync("async-ip-b"),
+      ])
+
+      expect(results[0].allowed).toBe(true)
+      expect(results[1].allowed).toBe(true)
+    })
+
+    it("works correctly with sequential and concurrent mix", async () => {
+      const asyncLimiter = createRateLimiter({ maxRequests: 3, windowMs: 60_000 })
+
+      // First request
+      const r1 = await asyncLimiter.checkAsync("mixed-ip")
+      expect(r1.allowed).toBe(true)
+      expect(r1.remaining).toBe(2)
+
+      // Two concurrent requests
+      const [r2, r3] = await Promise.all([
+        asyncLimiter.checkAsync("mixed-ip"),
+        asyncLimiter.checkAsync("mixed-ip"),
+      ])
+      expect(r2.allowed).toBe(true)
+      expect(r3.allowed).toBe(true)
+
+      // Fourth request should be blocked
+      const r4 = await asyncLimiter.checkAsync("mixed-ip")
+      expect(r4.allowed).toBe(false)
+    })
+  })
 })
 
 describe("waitlistRateLimiter", () => {
@@ -121,5 +169,12 @@ describe("waitlistRateLimiter", () => {
       expect(waitlistRateLimiter.check("test-ip").allowed).toBe(true)
     }
     expect(waitlistRateLimiter.check("test-ip").allowed).toBe(false)
+  })
+
+  it("checkAsync allows 5 requests per minute", async () => {
+    for (let i = 0; i < 5; i++) {
+      expect((await waitlistRateLimiter.checkAsync("test-ip-async")).allowed).toBe(true)
+    }
+    expect((await waitlistRateLimiter.checkAsync("test-ip-async")).allowed).toBe(false)
   })
 })
