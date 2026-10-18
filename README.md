@@ -137,4 +137,4 @@ disposable-domain rejection, rate limiting, client-IP extraction from proxy
 headers, honeypot behavior, source defaults, permanent-vs-retryable mesh
 failures, queue envelope write/read, age encryption (ciphertext is opaque and
 recoverable only with the private key), and the retry worker's delivery,
-backoff, expiry and permanent-rejection paths.
+backoff, old-entry warnings and permanent-rejection paths.

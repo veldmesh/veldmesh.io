@@ -61,3 +61,24 @@ describe("WaitlistForm disabled state", () => {
     expect(result.missing).toEqual([])
   })
 })
+describe("consent hash consistency with rendered form", () => {
+  it("hash of the consent label text as displayed matches CONSENT_TEXT_HASH", async () => {
+    const React = await import("react")
+    const { renderToStaticMarkup } = await import("react-dom/server")
+
+    // Render the form and extract the consent label text exactly as displayed
+    const html = renderToStaticMarkup(React.createElement(WaitlistForm, { pageSource: "home" }))
+    const match = html.match(/<label[^>]*for="[^"]*"[^>]*>([^<]+)<\/label>/g)
+    expect(match).not.toBeNull()
+
+    // The consent label is the one that starts with "I agree" (from CONSENT_LABEL)
+    const consentLabelText = match!
+      .map((l) => l.replace(/<[^>]+>/g, ""))
+      .find((text) => text.includes("I agree"))
+    expect(consentLabelText).toBeDefined()
+
+    // Hash the displayed text and compare to the server-side CONSENT_TEXT_HASH
+    const encryptionMod = await import("@/lib/encryption")
+    expect(encryptionMod.createConsentTextHash(consentLabelText!)).toBe(encryptionMod.CONSENT_TEXT_HASH)
+  })
+})

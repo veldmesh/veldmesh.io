@@ -80,14 +80,18 @@ describe("API /api/waitlist", () => {
   }
 
   describe("WAITLIST_ENABLED", () => {
-    it("returns 404 when WAITLIST_ENABLED is false", async () => {
+    it("returns 404 when WAITLIST_ENABLED is false and writes nothing", async () => {
       vi.stubEnv("WAITLIST_ENABLED", "false")
-      // Need to re-import the route to pick up the new env
       vi.resetModules()
       const routeMod = await import("@/app/api/waitlist/route")
+      const fetchSpy = vi.fn()
+      global.fetch = fetchSpy
       const res = await routeMod.POST(createRequest({ email: "user@example.com", consent: true }))
       expect(res.status).toBe(404)
       expect((await res.json()).error).toBe("Waitlist is not available at this time.")
+      expect(fetchSpy).not.toHaveBeenCalled()
+      const files = await listQueueFiles()
+      expect(files).toHaveLength(0)
     })
 
     it("returns 404 when WAITLIST_ENABLED is true but required config is missing", async () => {

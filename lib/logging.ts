@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import { hashEmail } from "./encryption"
-import { Decrypter } from "age-encryption"
 
 export type LogLevel = "info" | "warn" | "error"
 
@@ -69,27 +68,4 @@ export function logError(message: string, email?: string, consent_at?: string, e
     metadata,
   }
   console.error(formatLog(entry))
-}
-
-/**
- * Decrypt a queue entry's ciphertext to extract email_hash for logging.
- * This requires the age private key (AGE_SECRET_KEY env var) which should
- * only be set on the operator's server or in test environments.
- * Returns undefined if decryption is not possible.
- */
-export async function decryptQueueEntryForLogging(ciphertext: string): Promise<{ email_hash?: string }> {
-  const privateKey = process.env.AGE_SECRET_KEY
-  if (!privateKey) {
-    return {}
-  }
-
-  try {
-    const decrypter = new Decrypter()
-    decrypter.addIdentity(privateKey)
-    const plaintext = await decrypter.decrypt(new Uint8Array(Buffer.from(ciphertext, "base64")), "text")
-    const payload = JSON.parse(plaintext)
-    return { email_hash: payload.email_hash }
-  } catch {
-    return {}
-  }
 }

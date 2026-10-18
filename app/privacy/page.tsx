@@ -51,8 +51,9 @@ export default function PrivacyPage() {
             (utm_source, utm_medium, utm_campaign, utm_term, utm_content) and the referring
             page that brought you to the site, so we know which outreach is working. Signups are sent to our own server
             over an encrypted connection and stored there; if that server is unreachable, an
-            encrypted copy is held on the web server for up to 24 hours until delivery can be
-            retried. Your IP address is used transiently to rate-limit the signup form and is
+            encrypted copy is held on the web server and delivery is retried
+            until it succeeds; entries that are permanently rejected are kept in a separate
+            archive on the web server. Your IP address is used transiently to rate-limit the signup form and is
             stored only as a salted hash alongside queued entries.
           </p>
           <h3>Usage data</h3>

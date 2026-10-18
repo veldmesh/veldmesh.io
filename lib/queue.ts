@@ -32,6 +32,10 @@ export interface QueueEnvelope {
 
 export type QueueEntryInput = MeshWaitlistPayload & { ip?: string }
 
+// In-process mutex to serialize bounds check + write, preventing concurrent
+// writes from exceeding MAX_QUEUE_FILES / MAX_QUEUE_SIZE_BYTES.
+let queueWriteChain: Promise<unknown> = Promise.resolve()
+
 export async function ensureQueueDir(): Promise<void> {
   await mkdir(QUEUE_DIR, { recursive: true, mode: 0o700 })
 }
@@ -42,7 +46,7 @@ export function queueFilename(queuedAtMs: number, idempotencyKey: string): strin
   return `${queuedAtMs}-${idempotencyKey}.json`
 }
 
-export async function writeQueueEntry(entry: QueueEntryInput): Promise<string> {
+async function writeQueueEntryUnserialized(entry: QueueEntryInput): Promise<string> {
   await ensureQueueDir()
 
   // Check queue bounds using worker-only function
@@ -81,4 +85,10 @@ export async function writeQueueEntry(entry: QueueEntryInput): Promise<string> {
   await writeFile(filepath, JSON.stringify(envelope), { mode: 0o600 })
 
   return filepath
+}
+
+export async function writeQueueEntry(entry: QueueEntryInput): Promise<string> {
+  const result = queueWriteChain.then(() => writeQueueEntryUnserialized(entry))
+  queueWriteChain = result.catch(() => {})
+  return result
 }

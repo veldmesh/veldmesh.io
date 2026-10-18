@@ -10,8 +10,6 @@ beforeAll(async () => {
   process.env.QUEUE_ENCRYPTION_KEY = publicKey
   process.env.LOG_SALT = "test-salt"
   process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-worker-test"
-  // Provide private key for decryptQueueEntryForLogging in tests
-  process.env.AGE_SECRET_KEY = privateKey
 })
 
 const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-worker-test"

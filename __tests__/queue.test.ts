@@ -292,4 +292,37 @@ describe("queue", () => {
     const corruptPath = join(CORRUPT_DIR, basename(filepath))
     expect(await fileExists(corruptPath)).toBe(true)
   })
+
+  it("serializes concurrent writes to enforce queue bounds (no race condition)", async () => {
+    const fs = await import("fs/promises")
+    const { join } = await import("path")
+    // MAX_QUEUE_FILES=5 in this test file's environment
+    // Pre-fill with 3 files, leaving 2 slots
+    for (let i = 0; i < 3; i++) {
+      await fs.writeFile(join(TEST_QUEUE_DIR, `${1700000000000 + i}-filler.json`), "{}", "utf-8")
+    }
+
+    // Fire 4 concurrent writes — only 2 should succeed
+    const entries = [
+      { ...sampleEntry, idempotency_key: "concurrent-1" },
+      { ...sampleEntry, idempotency_key: "concurrent-2" },
+      { ...sampleEntry, idempotency_key: "concurrent-3" },
+      { ...sampleEntry, idempotency_key: "concurrent-4" },
+    ]
+
+    const results = await Promise.allSettled(entries.map((e) => writeQueueEntry(e)))
+    const successful = results.filter((r) => r.status === "fulfilled").length
+    const failed = results.filter((r) => r.status === "rejected").length
+
+    // With mutex serialization, exactly 2 should succeed (slots 4 and 5),
+    // and 2 should fail with QUEUE_FULL
+    expect(successful).toBe(2)
+    expect(failed).toBe(2)
+    expect(results.filter((r) => r.status === "rejected" && r.reason?.message?.startsWith("QUEUE_FULL")).length).toBe(2)
+
+    // Total files should be exactly 5 (3 fillers + 2 new)
+    const allFiles = await fs.readdir(TEST_QUEUE_DIR)
+    const jsonFiles = allFiles.filter((f) => f.endsWith(".json"))
+    expect(jsonFiles).toHaveLength(5)
+  })
 })

@@ -4,6 +4,10 @@ import { ShieldCheck, DollarSign, Code2 } from "lucide-react"
 import { WaitlistForm } from "@/components/waitlist-form"
 import { checkWaitlistConfig } from "@/lib/waitlist-config"
 
+// The waitlist on/off state is read from env vars at request time, so this
+// page must be rendered per-request, not statically prerendered at build time.
+export const dynamic = "force-dynamic"
+
 const features = [
   {
     icon: DollarSign,

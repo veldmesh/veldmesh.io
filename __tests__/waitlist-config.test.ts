@@ -85,3 +85,18 @@ describe("checkWaitlistConfig", () => {
     expect(resultStr).not.toContain("salt")
   })
 })
+describe("pages export dynamic force-dynamic", () => {
+  const pages = [
+    "@/app/page",
+    "@/app/features/page",
+    "@/app/docs/page",
+    "@/app/waitlist/page",
+  ]
+
+  it("each page exports dynamic = 'force-dynamic'", async () => {
+    for (const page of pages) {
+      const mod = await import(page)
+      expect(mod.dynamic).toBe("force-dynamic")
+    }
+  })
+})
