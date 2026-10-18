@@ -28,6 +28,10 @@ let updateQueueEnvelope: typeof import("@/lib/queue-worker").updateQueueEnvelope
 let calculateNextRetry: typeof import("@/lib/queue-worker").calculateNextRetry
 let isPermanentFailure: typeof import("@/lib/queue-worker").isPermanentFailure
 let hashEmail: typeof import("@/lib/encryption").hashEmail
+let moveToRejected: typeof import("@/lib/queue-worker").moveToRejected
+let moveToCorrupt: typeof import("@/lib/queue-worker").moveToCorrupt
+let REJECTED_DIR: typeof import("@/lib/queue-worker").REJECTED_DIR
+let CORRUPT_DIR: typeof import("@/lib/queue-worker").CORRUPT_DIR
 
 beforeAll(async () => {
   const queueMod = await import("@/lib/queue")
@@ -41,6 +45,10 @@ beforeAll(async () => {
   calculateNextRetry = queueWorkerMod.calculateNextRetry
   isPermanentFailure = queueWorkerMod.isPermanentFailure
   hashEmail = encryptionMod.hashEmail
+  moveToRejected = queueWorkerMod.moveToRejected
+  moveToCorrupt = queueWorkerMod.moveToCorrupt
+  REJECTED_DIR = queueWorkerMod.REJECTED_DIR
+  CORRUPT_DIR = queueWorkerMod.CORRUPT_DIR
 })
 
 async function decryptForTest(ciphertext: string): Promise<Record<string, unknown>> {
@@ -66,11 +74,23 @@ const sampleEntry = {
   referrer: "https://example.com",
 }
 
+async function fileExists(path: string): Promise<boolean> {
+  const fs = await import("fs/promises")
+  try {
+    await fs.stat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 describe("queue", () => {
   beforeEach(async () => {
     const fs = await import("fs/promises")
     await fs.rm(TEST_QUEUE_DIR, { recursive: true, force: true })
     await fs.mkdir(TEST_QUEUE_DIR, { recursive: true })
+    await fs.mkdir(`${TEST_QUEUE_DIR}/rejected`, { recursive: true })
+    await fs.mkdir(`${TEST_QUEUE_DIR}/corrupt`, { recursive: true })
   })
 
   afterEach(async () => {
@@ -78,7 +98,7 @@ describe("queue", () => {
     await fs.rm(TEST_QUEUE_DIR, { recursive: true, force: true })
   })
 
-  it("writes entries as {idempotency_key, next_retry_at, retry_count, ciphertext} envelopes", async () => {
+  it("writes entries as {idempotency_key, next_retry_at, retry_count, ciphertext, email_hash} envelopes", async () => {
     const filepath = await writeQueueEntry(sampleEntry)
     expect(filepath).toMatch(/\.json$/)
 
@@ -88,7 +108,9 @@ describe("queue", () => {
     expect(envelope!.retry_count).toBe(0)
     expect(envelope!.next_retry_at).toBeDefined()
     expect(typeof envelope!.ciphertext).toBe("string")
-    expect(Object.keys(envelope!).sort()).toEqual(["ciphertext", "idempotency_key", "next_retry_at", "retry_count"])
+    expect(envelope!.email_hash).toBeDefined()
+    expect(envelope!.email_hash).toBe(hashEmail(sampleEntry.email))
+    expect(Object.keys(envelope!).sort()).toEqual(["ciphertext", "email_hash", "idempotency_key", "next_retry_at", "retry_count"])
   })
 
   it("queue file contains no plaintext personal data", async () => {
@@ -98,7 +120,7 @@ describe("queue", () => {
 
     // The envelope itself is JSON, but must not leak any signup fields.
     const parsed = JSON.parse(raw)
-    expect(Object.keys(parsed).sort()).toEqual(["ciphertext", "idempotency_key", "next_retry_at", "retry_count"])
+    expect(Object.keys(parsed).sort()).toEqual(["ciphertext", "email_hash", "idempotency_key", "next_retry_at", "retry_count"])
     expect(raw).not.toContain("test@example.com")
     expect(raw).not.toContain("google")
     expect(parsed.ciphertext).not.toContain("test@example.com")
@@ -146,6 +168,12 @@ describe("queue", () => {
     expect(payload.ip_hash).toBeUndefined()
   })
 
+  it("envelope includes email_hash for worker logging without decryption", async () => {
+    const filepath = await writeQueueEntry(sampleEntry)
+    const envelope = await readQueueEnvelope(filepath)
+    expect(envelope!.email_hash).toBe(hashEmail(sampleEntry.email))
+  })
+
   it("lists, updates and deletes queue entries", async () => {
     const a = await writeQueueEntry(sampleEntry)
     const b = await writeQueueEntry({ ...sampleEntry, idempotency_key: "aaaaaaaa-2222-3333-4444-555555555555" })
@@ -187,23 +215,21 @@ describe("queue", () => {
     expect(retry10.getTime() - Date.now()).toBeLessThanOrEqual(5 * 60 * 1000 + 1000)
   })
 
-  it("isPermanentFailure is based on the queued-at timestamp in the filename", async () => {
-    const fresh = await writeQueueEntry(sampleEntry)
-    expect(isPermanentFailure(fresh)).toBe(false)
+  it("isPermanentFailure returns false (no 24h expiry)", async () => {
+    await writeQueueEntry(sampleEntry)
+    expect(isPermanentFailure()).toBe(false)
 
     const { join } = await import("path")
     const oldMs = Date.now() - 25 * 60 * 60 * 1000
-    const expired = join(TEST_QUEUE_DIR, `${oldMs}-old-uuid.json`)
-    expect(isPermanentFailure(expired)).toBe(true)
+    join(TEST_QUEUE_DIR, `${oldMs}-old-uuid.json`)
+    expect(isPermanentFailure()).toBe(false)
 
-    // Unparseable filenames are NOT treated as expired: the corruption
-    // handler in processQueue deals with them, so isPermanentFailure
-    // must not misclassify valid-but-oddly-named files as expired.
-    const unparseable = join(TEST_QUEUE_DIR, "not-a-timestamp.json")
-    expect(isPermanentFailure(unparseable)).toBe(false)
+    // Unparseable filenames are NOT treated as permanent failures
+    join(TEST_QUEUE_DIR, "not-a-timestamp.json")
+    expect(isPermanentFailure()).toBe(false)
   })
 
-  it("rejects new entries when the queue is full (QUEUE_FULL)", async () => {
+  it("rejects new entries when the queue is full (QUEUE_FULL) by file count", async () => {
     const fs = await import("fs/promises")
     const { join } = await import("path")
     // MAX_QUEUE_FILES=5 in this test file's environment
@@ -212,5 +238,28 @@ describe("queue", () => {
     }
 
     await expect(writeQueueEntry(sampleEntry)).rejects.toThrow("QUEUE_FULL")
+  })
+
+  it("moveToRejected moves file to rejected/ subdirectory", async () => {
+    const filepath = await writeQueueEntry(sampleEntry)
+    await moveToRejected(filepath)
+
+    expect(await fileExists(filepath)).toBe(false) // original gone
+    const { basename, join } = await import("path")
+    const rejectedPath = join(REJECTED_DIR, basename(filepath))
+    expect(await fileExists(rejectedPath)).toBe(true)
+  })
+
+  it("moveToCorrupt moves file to corrupt/ subdirectory", async () => {
+    const fs = await import("fs/promises")
+    const { join, basename } = await import("path")
+    const filepath = join(TEST_QUEUE_DIR, `${Date.now()}-corrupt.json`)
+    await fs.writeFile(filepath, "not-json", "utf-8")
+
+    await moveToCorrupt(filepath)
+
+    expect(await fileExists(filepath)).toBe(false) // original gone
+    const corruptPath = join(CORRUPT_DIR, basename(filepath))
+    expect(await fileExists(corruptPath)).toBe(true)
   })
 })

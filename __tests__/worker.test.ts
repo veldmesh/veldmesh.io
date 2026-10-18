@@ -10,6 +10,8 @@ beforeAll(async () => {
   process.env.QUEUE_ENCRYPTION_KEY = publicKey
   process.env.LOG_SALT = "test-salt"
   process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-worker-test"
+  // Provide private key for decryptQueueEntryForLogging in tests
+  process.env.AGE_SECRET_KEY = privateKey
 })
 
 const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-worker-test"
@@ -21,6 +23,8 @@ vi.mock("@/lib/mesh", () => ({
 let processQueue: typeof import("@/lib/queue-worker").processQueue
 let listQueueFiles: typeof import("@/lib/queue-worker").listQueueFiles
 let readQueueEnvelope: typeof import("@/lib/queue-worker").readQueueEnvelope
+let isPermanentFailure: typeof import("@/lib/queue-worker").isPermanentFailure
+let resetOldEntryWarningTracker: typeof import("@/lib/queue-worker").resetOldEntryWarningTracker
 let postQueuedToMesh: ReturnType<typeof vi.fn>
 
 beforeAll(async () => {
@@ -29,6 +33,8 @@ beforeAll(async () => {
   processQueue = queueWorkerMod.processQueue
   listQueueFiles = queueWorkerMod.listQueueFiles
   readQueueEnvelope = queueWorkerMod.readQueueEnvelope
+  isPermanentFailure = queueWorkerMod.isPermanentFailure
+  resetOldEntryWarningTracker = queueWorkerMod.resetOldEntryWarningTracker
   postQueuedToMesh = meshMod.postQueuedToMesh as unknown as ReturnType<typeof vi.fn>
 })
 
@@ -46,6 +52,7 @@ function envelope(overrides: Record<string, unknown> = {}): Record<string, unkno
     next_retry_at: new Date(Date.now() - 1000).toISOString(), // due now
     retry_count: 0,
     ciphertext: "encrypted-payload",
+    email_hash: "test-hash",
     ...overrides,
   }
 }
@@ -59,7 +66,10 @@ describe("waitlist queue worker", () => {
     const fs = await import("fs/promises")
     await fs.rm(TEST_QUEUE_DIR, { recursive: true, force: true })
     await fs.mkdir(TEST_QUEUE_DIR, { recursive: true })
+    await fs.mkdir(`${TEST_QUEUE_DIR}/rejected`, { recursive: true })
+    await fs.mkdir(`${TEST_QUEUE_DIR}/corrupt`, { recursive: true })
     postQueuedToMesh.mockReset()
+    resetOldEntryWarningTracker()
     consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
     consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {})
     consoleLog = vi.spyOn(console, "log").mockImplementation(() => {})
@@ -110,34 +120,72 @@ describe("waitlist queue worker", () => {
     expect(await listQueueFiles()).toHaveLength(1)
   })
 
-  it("removes permanently rejected entries and logs at ERROR with the idempotency_key", async () => {
+  it("moves permanently rejected entries to rejected/ and logs at ERROR with the idempotency_key", async () => {
     await writeEnvelopeFile(`${Date.now()}-key-1.json`, envelope())
     postQueuedToMesh.mockResolvedValue({ ok: false, status: 400, retryable: false })
 
     await processQueue()
 
+    // File moved to rejected/, not deleted
     expect(await listQueueFiles()).toHaveLength(0)
+    const fs = await import("fs/promises")
+    const rejectedFiles = await fs.readdir(`${TEST_QUEUE_DIR}/rejected`)
+    expect(rejectedFiles).toHaveLength(1)
     expect(consoleError).toHaveBeenCalled()
     const logged = JSON.stringify(consoleError.mock.calls)
     expect(logged).toContain("key-1")
     expect(logged).toContain("MESH_PERMANENT_400")
+    expect(logged).toContain("test-hash") // email_hash in log
   })
 
-  it("expires entries after 24h: logs at ERROR with the idempotency_key, never silently drops", async () => {
+  it("does NOT expire entries after 24h — they continue to be retried", async () => {
     const oldMs = Date.now() - 25 * 60 * 60 * 1000
     await writeEnvelopeFile(`${oldMs}-key-1.json`, envelope())
 
+    // Mock a retryable failure so we can verify it gets rescheduled
+    postQueuedToMesh.mockResolvedValue({ ok: false, status: 500, retryable: true })
+
     await processQueue()
 
-    expect(postQueuedToMesh).not.toHaveBeenCalled()
-    expect(await listQueueFiles()).toHaveLength(0)
-    expect(consoleError).toHaveBeenCalled()
-    const logged = JSON.stringify(consoleError.mock.calls)
-    expect(logged).toContain("key-1")
-    expect(logged).toContain("QUEUE_EXPIRED")
+    // Entry should still exist and be rescheduled (not deleted)
+    expect(postQueuedToMesh).toHaveBeenCalled()
+    expect(await listQueueFiles()).toHaveLength(1)
+    const updated = await readQueueEnvelope((await listQueueFiles())[0])
+    expect(updated!.retry_count).toBe(1)
   })
 
-  it("deletes corrupted queue files with a warning", async () => {
+  it("logs WARN once per hour for entries older than 24h", async () => {
+    const oldMs = Date.now() - 25 * 60 * 60 * 1000
+    await writeEnvelopeFile(`${oldMs}-key-1.json`, envelope({ idempotency_key: "old-key-1", next_retry_at: new Date(Date.now() - 1000).toISOString() }))
+
+    postQueuedToMesh.mockResolvedValue({ ok: false, status: 500, retryable: true })
+
+    await processQueue()
+
+    // Should log WARN about old entry
+    const warnCalls = consoleWarn.mock.calls.filter((call) => JSON.stringify(call).includes("QUEUE_OLD_ENTRY"))
+    expect(warnCalls.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it("does not log WARN again within the same hour for the same entry", async () => {
+    const oldMs = Date.now() - 25 * 60 * 60 * 1000
+    await writeEnvelopeFile(`${oldMs}-key-1.json`, envelope({ idempotency_key: "old-key-2", next_retry_at: new Date(Date.now() - 1000).toISOString() }))
+
+    postQueuedToMesh.mockResolvedValue({ ok: false, status: 500, retryable: true })
+
+    // First pass
+    await processQueue()
+    const warnCalls1 = consoleWarn.mock.calls.filter((call) => JSON.stringify(call).includes("QUEUE_OLD_ENTRY"))
+    expect(warnCalls1.length).toBeGreaterThanOrEqual(1)
+
+    // Second pass (same hour) - should not log again
+    consoleWarn.mockClear()
+    await processQueue()
+    const warnCalls2 = consoleWarn.mock.calls.filter((call) => JSON.stringify(call).includes("QUEUE_OLD_ENTRY"))
+    expect(warnCalls2.length).toBe(0)
+  })
+
+  it("moves corrupted queue files to corrupt/ with a warning", async () => {
     const fs = await import("fs/promises")
     const { join } = await import("path")
     await fs.writeFile(join(TEST_QUEUE_DIR, `${Date.now()}-corrupt.json`), "not-json", "utf-8")
@@ -145,7 +193,11 @@ describe("waitlist queue worker", () => {
     await processQueue()
 
     expect(await listQueueFiles()).toHaveLength(0)
+    const corruptFiles = await fs.readdir(`${TEST_QUEUE_DIR}/corrupt`)
+    expect(corruptFiles).toHaveLength(1)
     expect(consoleWarn).toHaveBeenCalled()
+    const logged = JSON.stringify(consoleWarn.mock.calls)
+    expect(logged).toContain("QUEUE_READ_FAILED")
   })
 
   it("keeps the ciphertext untouched across retries (the worker never decrypts)", async () => {
@@ -162,5 +214,11 @@ describe("waitlist queue worker", () => {
     expect(updated!.retry_count).toBe(3)
     expect(postQueuedToMesh).toHaveBeenCalledTimes(3)
     expect(postQueuedToMesh).toHaveBeenNthCalledWith(3, "key-1", "original-ciphertext")
+  })
+
+  it("isPermanentFailure returns false for all inputs", () => {
+    expect(isPermanentFailure()).toBe(false)
+    expect(isPermanentFailure()).toBe(false)
+    expect(isPermanentFailure()).toBe(false)
   })
 })

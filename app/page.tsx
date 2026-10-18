@@ -2,6 +2,7 @@
 import Link from "next/link"
 import { ShieldCheck, DollarSign, Code2 } from "lucide-react"
 import { WaitlistForm } from "@/components/waitlist-form"
+import { checkWaitlistConfig } from "@/lib/waitlist-config"
 
 const features = [
   {
@@ -22,6 +23,8 @@ const features = [
 ]
 
 export default function HomePage() {
+  const { enabled } = checkWaitlistConfig()
+
   return (
     <>
       {/* Hero */}
@@ -82,7 +85,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <WaitlistForm pageSource="home" />
+          <WaitlistForm pageSource="home" disabled={!enabled} />
         </div>
       </section>
 

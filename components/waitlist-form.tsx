@@ -2,7 +2,7 @@
 "use client"
 
 import { useId, useState, type ChangeEvent, type FormEvent } from "react"
-import { Loader2, CheckCircle, AlertCircle } from "lucide-react"
+import { Loader2, CheckCircle, AlertCircle, Clock } from "lucide-react"
 import { CONSENT_LABEL, HONEYPOT_FIELD } from "@/lib/constants"
 
 type FormStatus = "idle" | "submitting" | "success" | "error"
@@ -10,9 +10,11 @@ type FormStatus = "idle" | "submitting" | "success" | "error"
 interface WaitlistFormProps {
   /** Page name sent as `source` when the visitor doesn't type one (e.g. "home"). */
   pageSource: string
+  /** When true, the waitlist is disabled and a neutral message is shown. */
+  disabled?: boolean
 }
 
-export function WaitlistForm({ pageSource }: WaitlistFormProps) {
+export function WaitlistForm({ pageSource, disabled = false }: WaitlistFormProps) {
   const emailId = useId()
   const sourceId = useId()
   const consentId = useId()
@@ -22,6 +24,19 @@ export function WaitlistForm({ pageSource }: WaitlistFormProps) {
   const [consent, setConsent] = useState(false)
   const [status, setStatus] = useState<FormStatus>("idle")
   const [errorMessage, setErrorMessage] = useState("")
+
+  if (disabled) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-600"
+      >
+        <Clock className="h-5 w-5 flex-shrink-0 text-slate-400" aria-hidden="true" />
+        Waitlist opening soon
+      </div>
+    )
+  }
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()

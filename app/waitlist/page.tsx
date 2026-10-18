@@ -2,6 +2,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { WaitlistForm } from "@/components/waitlist-form"
+import { checkWaitlistConfig } from "@/lib/waitlist-config"
 
 export const metadata: Metadata = {
   title: "Join the waitlist — Veldmesh",
@@ -10,6 +11,8 @@ export const metadata: Metadata = {
 }
 
 export default function WaitlistPage() {
+  const { enabled } = checkWaitlistConfig()
+
   return (
     <div className="bg-white py-20">
       <div className="mx-auto max-w-xl px-4 text-center sm:px-6 lg:px-8">
@@ -20,7 +23,7 @@ export default function WaitlistPage() {
         </p>
 
         <div className="mx-auto mt-10 max-w-md text-left">
-          <WaitlistForm pageSource="waitlist" />
+          <WaitlistForm pageSource="waitlist" disabled={!enabled} />
         </div>
 
         <p className="mx-auto mt-8 max-w-md text-sm leading-relaxed text-slate-500">

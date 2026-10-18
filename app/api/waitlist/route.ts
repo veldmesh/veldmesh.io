@@ -2,20 +2,42 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { validateEmail, normalizeEmail } from "@/lib/email"
-import { waitlistRateLimiter } from "@/lib/rate-limit"
+import { waitlistRateLimiter, startRateLimitCleanup } from "@/lib/rate-limit"
 import { getClientIp } from "@/lib/client-ip"
 import { postToMesh, isValidationStatus } from "@/lib/mesh"
 import { writeQueueEntry } from "@/lib/queue"
 import { CONSENT_VERSION, CONSENT_LABEL, DEFAULT_SOURCE, MAX_SOURCE_LENGTH, HONEYPOT_FIELD } from "@/lib/constants"
 import { CONSENT_TEXT_HASH, hashEmail } from "@/lib/encryption"
 import { logInfo, logWarn, logError } from "@/lib/logging"
+import { checkWaitlistConfig } from "@/lib/waitlist-config"
 
 export const runtime = "nodejs"
 
 const PERMANENT_VALIDATION_MESSAGE = "Your signup could not be accepted. Please check your email address and try again."
 const PERMANENT_SERVER_MESSAGE = "Something went wrong on our side. Please try again later."
 
+// Start rate limiter cleanup interval for this process
+startRateLimitCleanup()
+
+function waitlistDisabledResponse(): NextResponse {
+  return NextResponse.json(
+    { error: "Waitlist is not available at this time." },
+    { status: 404 }
+  )
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Check if waitlist is enabled and configured
+  const { enabled, missing } = checkWaitlistConfig()
+  if (!enabled) {
+    if (missing.length > 0) {
+      logWarn("Waitlist API called but not fully configured", undefined, undefined, "WAITLIST_DISABLED", { missing })
+    } else {
+      logInfo("Waitlist API called but disabled", undefined, undefined)
+    }
+    return waitlistDisabledResponse()
+  }
+
   const clientIp = getClientIp(request.headers)
   const rateLimitResult = waitlistRateLimiter.check(clientIp)
 

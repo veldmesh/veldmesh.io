@@ -132,3 +132,20 @@ describe("encryption", () => {
     vi.stubEnv("QUEUE_ENCRYPTION_KEY", originalKey)
   })
 })
+
+describe("consent hash consistency", () => {
+  it("createConsentTextHash(displayed label) === CONSENT_TEXT_HASH", async () => {
+    const { CONSENT_LABEL } = await import("@/lib/constants")
+    const { createConsentTextHash, CONSENT_TEXT_HASH } = await import("@/lib/encryption")
+
+    // The label as displayed in the form (from CONSENT_LABEL constant)
+    const displayedLabel = CONSENT_LABEL
+
+    // The hash computed from the displayed label should match the precomputed constant
+    expect(createConsentTextHash(displayedLabel)).toBe(CONSENT_TEXT_HASH)
+
+    // If someone changes the label but forgets to update CONSENT_LABEL constant,
+    // this test would fail because the displayed text wouldn't match
+    expect(createConsentTextHash("I agree to receive updates from Veldmesh and understand I can unsubscribe at any time.")).toBe(CONSENT_TEXT_HASH)
+  })
+})

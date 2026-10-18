@@ -5,10 +5,12 @@
 // only) so filesystem scanning code stays out of the server bundle.
 //
 // Each entry is stored as a JSON envelope:
-//   { "idempotency_key", "next_retry_at", "retry_count", "ciphertext" }
+//   { "idempotency_key", "next_retry_at", "retry_count", "ciphertext", "email_hash?" }
 // Only `ciphertext` is the age-encrypted signup payload. This host holds
 // only the encryption public key, so the queue is opaque to the web server
 // itself; the operator's server decrypts it with the matching private key.
+// The `email_hash` field (optional) is stored unencrypted to allow the
+// worker to log warnings about old entries without decrypting.
 import { mkdir, writeFile } from "fs/promises"
 import { join } from "path"
 import { encryptQueueEntry, hashEmail } from "./encryption"
@@ -25,6 +27,7 @@ export interface QueueEnvelope {
   next_retry_at: string
   retry_count: number
   ciphertext: string
+  email_hash?: string
 }
 
 export type QueueEntryInput = MeshWaitlistPayload & { ip?: string }
@@ -35,7 +38,7 @@ export async function ensureQueueDir(): Promise<void> {
 
 export function queueFilename(queuedAtMs: number, idempotencyKey: string): string {
   // Leading epoch timestamp: sortable, collision-free, and lets the worker
-  // compute the 24h expiry without storing plaintext metadata in the envelope.
+  // compute the age of entries without storing plaintext metadata in the envelope.
   return `${queuedAtMs}-${idempotencyKey}.json`
 }
 
@@ -61,12 +64,16 @@ export async function writeQueueEntry(entry: QueueEntryInput): Promise<string> {
     ;(payload as { ip_hash?: string }).ip_hash = hashEmail(ip)
   }
 
+  // Compute email_hash for logging (worker can read this without decrypting)
+  const emailHash = hashEmail(payload.email)
+
   const ciphertext = await encryptQueueEntry(payload)
   const envelope: QueueEnvelope = {
     idempotency_key: entry.idempotency_key,
     next_retry_at: new Date(now).toISOString(),
     retry_count: 0,
     ciphertext,
+    email_hash: emailHash,
   }
 
   const filename = queueFilename(now, entry.idempotency_key)

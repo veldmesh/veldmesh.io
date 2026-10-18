@@ -2,6 +2,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { WaitlistForm } from "@/components/waitlist-form"
+import { checkWaitlistConfig } from "@/lib/waitlist-config"
 
 export const metadata: Metadata = {
   title: "Docs — Veld",
@@ -21,6 +22,8 @@ const cliCommands = [
 ]
 
 export default function DocsPage() {
+  const { enabled } = checkWaitlistConfig()
+
   return (
     <div className="bg-white py-16">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
@@ -174,7 +177,7 @@ ping 192.168.1.100`}
             Get early access to Veldmesh. We&rsquo;ll notify you when it&rsquo;s ready.
           </p>
           <div className="mx-auto mt-8 max-w-md">
-            <WaitlistForm pageSource="docs" />
+            <WaitlistForm pageSource="docs" disabled={!enabled} />
           </div>
         </section>
       </div>

@@ -18,6 +18,7 @@ beforeAll(async () => {
   process.env.WAITLIST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-api-test"
   process.env.WAITLIST_FORWARD_URL = "https://example.com"
   process.env.WAITLIST_BEARER_TOKEN = "test-token"
+  process.env.WAITLIST_ENABLED = "true"
 })
 
 const TEST_QUEUE_DIR = "/tmp/veldsite-test-waitlist-queue-api-test"
@@ -77,6 +78,38 @@ describe("API /api/waitlist", () => {
       body: JSON.stringify(body),
     })
   }
+
+  describe("WAITLIST_ENABLED", () => {
+    it("returns 404 when WAITLIST_ENABLED is false", async () => {
+      vi.stubEnv("WAITLIST_ENABLED", "false")
+      // Need to re-import the route to pick up the new env
+      vi.resetModules()
+      const routeMod = await import("@/app/api/waitlist/route")
+      const res = await routeMod.POST(createRequest({ email: "user@example.com", consent: true }))
+      expect(res.status).toBe(404)
+      expect((await res.json()).error).toBe("Waitlist is not available at this time.")
+    })
+
+    it("returns 404 when WAITLIST_ENABLED is true but required config is missing", async () => {
+      vi.stubEnv("WAITLIST_ENABLED", "true")
+      vi.stubEnv("WAITLIST_FORWARD_URL", "")
+      vi.resetModules()
+      const routeMod = await import("@/app/api/waitlist/route")
+      const res = await routeMod.POST(createRequest({ email: "user@example.com", consent: true }))
+      expect(res.status).toBe(404)
+    })
+
+    it("works normally when WAITLIST_ENABLED is true and config is present", async () => {
+      vi.stubEnv("WAITLIST_ENABLED", "true")
+      vi.stubEnv("WAITLIST_FORWARD_URL", "https://example.com")
+      vi.stubEnv("WAITLIST_BEARER_TOKEN", "test-token")
+      vi.resetModules()
+      const routeMod = await import("@/app/api/waitlist/route")
+      global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+      const res = await routeMod.POST(createRequest({ email: "user@example.com", consent: true }))
+      expect(res.status).toBe(201)
+    })
+  })
 
   describe("validation", () => {
     it("returns 400 for missing email", async () => {

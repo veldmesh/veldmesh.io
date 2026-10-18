@@ -20,6 +20,14 @@ docs pages, or the dedicated `/waitlist` page. The shared form component
 (`components/waitlist-form.tsx`) posts to **our own** API route,
 `POST /api/waitlist` — the browser never talks to any other server.
 
+The waitlist is controlled by the `WAITLIST_ENABLED` environment variable.
+When set to `"true"` **and** all required configuration is present
+(`WAITLIST_FORWARD_URL`, `WAITLIST_BEARER_TOKEN`, `QUEUE_ENCRYPTION_KEY`,
+`LOG_SALT`), the form is shown and the API route accepts signups. When
+disabled or misconfigured, every page that would show the form displays a
+neutral "Waitlist opening soon" note instead, and `POST /api/waitlist`
+returns `404` without touching the queue.
+
 ### Flow: route → mesh → queue fallback
 
 1. **Validation** (`app/api/waitlist/route.ts`) — the route requires a valid,
@@ -56,9 +64,12 @@ docs pages, or the dedicated `/waitlist` page. The shared form component
    `{idempotency_key, ciphertext}`). The operator's server holds the age
    **private key**, decrypts there, and deduplicates on `idempotency_key`.
    Retries back off exponentially (30s → 60s → 120s … capped at 5 minutes).
-   On a 2xx the queue entry is deleted. Entries older than 24 hours, or
-   permanently rejected by the server, are logged at ERROR with their
-   `idempotency_key` (never silently dropped) and removed.
+   On a 2xx the queue entry is deleted. Entries permanently rejected by the
+   server (4xx) are moved to a `rejected/` subdirectory (still encrypted) and
+   logged at ERROR with their `idempotency_key` and status. Entries older than
+   24 hours are not deleted; they continue to be retried with capped backoff
+   and log a WARN once per hour (email hash only). Corrupted/unreadable queue
+   files are moved to a `corrupt/` subdirectory instead of being deleted.
 
 ### Operator's server contract
 
@@ -77,7 +88,7 @@ is the base64 age-encrypted original payload. The operator's server decrypts
 it with the age private key (matching `QUEUE_ENCRYPTION_KEY`'s public key),
 stores the signup if the `idempotency_key` has not been seen (deduplication),
 and returns 2xx on success. 400/422 are permanent rejections (entry is
-removed from the queue and logged); 408/429/5xx are retryable.
+moved to `rejected/` and logged); 408/429/5xx are retryable.
 
 Both endpoints require `Authorization: Bearer <WAITLIST_BEARER_TOKEN>`.
 
@@ -98,7 +109,8 @@ The origin should never be exposed directly.
 
 | Variable | Purpose |
 | --- | --- |
-| `WAITLIST_FORWARD_URL` | Base URL of the operator's server (e.g. `https://example.com/api/waitlist`) |
+| `WAITLIST_ENABLED` | Set to `"true"` to enable the waitlist form and API route (default `false`). Requires all other waitlist vars. |
+| `WAITLIST_FORWARD_URL` | Base URL of the operator's server (e.g. `https://example.com`) |
 | `WAITLIST_BEARER_TOKEN` | Bearer token sent to the operator's server |
 | `QUEUE_ENCRYPTION_KEY` | age **public** key (`age1…`) used to encrypt queued entries. The matching private key lives only on the operator's server — never on this host |
 | `LOG_SALT` | Salt for the SHA-256 `email_hash` used in logs (required in production) |

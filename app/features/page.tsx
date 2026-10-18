@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import type { ReactNode } from "react"
 import { Lock, Wifi, RouteOff, Server } from "lucide-react"
 import { WaitlistForm } from "@/components/waitlist-form"
+import { checkWaitlistConfig } from "@/lib/waitlist-config"
 
 export const metadata: Metadata = {
   title: "Features — Veld",
@@ -55,6 +56,8 @@ const sections: { icon: typeof Lock; title: string; body: ReactNode[]; detail: s
 ]
 
 export default function FeaturesPage() {
+  const { enabled } = checkWaitlistConfig()
+
   return (
     <div className="bg-white py-20">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
@@ -94,7 +97,7 @@ export default function FeaturesPage() {
             Get early access to Veldmesh. We&rsquo;ll notify you when it&rsquo;s ready.
           </p>
           <div className="mx-auto mt-8 max-w-md">
-            <WaitlistForm pageSource="features" />
+            <WaitlistForm pageSource="features" disabled={!enabled} />
           </div>
         </section>
       </div>
