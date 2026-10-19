@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Ironfeast Media, LLC. All rights reserved.
 import Link from "next/link"
 import { ShieldCheck, DollarSign, Code2 } from "lucide-react"
+import { WaitlistForm } from "@/components/waitlist-form"
+import { checkWaitlistConfig } from "@/lib/waitlist-config"
+
+// The waitlist on/off state is read from env vars at request time, so this
+// page must be rendered per-request, not statically prerendered at build time.
+export const dynamic = "force-dynamic"
 
 const features = [
   {
@@ -21,6 +27,8 @@ const features = [
 ]
 
 export default function HomePage() {
+  const { enabled } = checkWaitlistConfig()
+
   return (
     <>
       {/* Hero */}
@@ -46,7 +54,7 @@ export default function HomePage() {
             </Link>
             <Link
               href="/docs"
-              className="rounded-md border border-slate-200 bg-white px-6 py-3 text-base font-medium text-slate-900 hover:bg-slate-50 transition-colors"
+              className="rounded-md border border-slate-200 bg-white px-6 py-3 text-base font-medium text-slate-900 hover:bg-slate-50"
             >
               Read the docs
             </Link>
@@ -68,6 +76,20 @@ export default function HomePage() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* Waitlist Signup */}
+      <section className="bg-white py-20 border-t border-slate-200">
+        <div className="mx-auto max-w-xl px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl font-bold text-slate-900">Join the waitlist</h2>
+            <p className="mt-2 text-slate-600">
+              Get early access to Veldmesh. We'll notify you when it's ready.
+            </p>
+          </div>
+
+          <WaitlistForm pageSource="home" disabled={!enabled} />
         </div>
       </section>
 
