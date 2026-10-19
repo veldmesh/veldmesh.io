@@ -60,6 +60,53 @@ describe("WaitlistForm disabled state", () => {
     expect(result.enabled).toBe(true)
     expect(result.missing).toEqual([])
   })
+
+  it("renders the full form when checkWaitlistConfig returns enabled: true (end-to-end)", async () => {
+    const React = await import("react")
+    const { renderToStaticMarkup } = await import("react-dom/server")
+
+    // Set full config so checkWaitlistConfig returns enabled: true
+    process.env.WAITLIST_ENABLED = "true"
+    process.env.WAITLIST_FORWARD_URL = "https://example.com"
+    process.env.WAITLIST_BEARER_TOKEN = "token"
+    process.env.QUEUE_ENCRYPTION_KEY = "age1test"
+    process.env.LOG_SALT = "salt"
+
+    // Reset modules to pick up new env
+    vi.resetModules()
+    const { WaitlistForm: FreshForm } = await import("@/components/waitlist-form")
+    const { checkWaitlistConfig: freshConfig } = await import("@/lib/waitlist-config")
+
+    const { enabled } = freshConfig()
+    expect(enabled).toBe(true)
+
+    const html = renderToStaticMarkup(React.createElement(FreshForm, { pageSource: "home", disabled: !enabled }))
+
+    expect(html).toContain("Email address")
+    expect(html).toContain("Join waitlist")
+    expect(html).toContain("consent")
+    expect(html).not.toContain("Waitlist opening soon")
+  })
+
+  it("renders the disabled message when checkWaitlistConfig returns enabled: false (end-to-end)", async () => {
+    const React = await import("react")
+    const { renderToStaticMarkup } = await import("react-dom/server")
+
+    // Disable via WAITLIST_ENABLED
+    process.env.WAITLIST_ENABLED = "false"
+    vi.resetModules()
+    const { WaitlistForm: FreshForm } = await import("@/components/waitlist-form")
+    const { checkWaitlistConfig: freshConfig } = await import("@/lib/waitlist-config")
+
+    const { enabled } = freshConfig()
+    expect(enabled).toBe(false)
+
+    const html = renderToStaticMarkup(React.createElement(FreshForm, { pageSource: "home", disabled: !enabled }))
+
+    expect(html).toContain("Waitlist opening soon")
+    expect(html).not.toContain("input")
+    expect(html).not.toContain("Email address")
+  })
 })
 describe("consent hash consistency with rendered form", () => {
   it("hash of the consent label text as displayed matches CONSENT_TEXT_HASH", async () => {

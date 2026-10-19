@@ -2,7 +2,7 @@
 import { randomUUID } from "crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { validateEmail, normalizeEmail } from "@/lib/email"
-import { waitlistRateLimiter, startRateLimitCleanup } from "@/lib/rate-limit"
+import { waitlistRateLimiter } from "@/lib/rate-limit"
 import { getClientIp } from "@/lib/client-ip"
 import { postToMesh, isValidationStatus } from "@/lib/mesh"
 import { writeQueueEntry } from "@/lib/queue"
@@ -15,9 +15,6 @@ export const runtime = "nodejs"
 
 const PERMANENT_VALIDATION_MESSAGE = "Your signup could not be accepted. Please check your email address and try again."
 const PERMANENT_SERVER_MESSAGE = "Something went wrong on our side. Please try again later."
-
-// Start rate limiter cleanup interval for this process
-startRateLimitCleanup()
 
 function waitlistDisabledResponse(): NextResponse {
   return NextResponse.json(
